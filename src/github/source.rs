@@ -5,7 +5,7 @@ pub trait PullRequestSource: Send {
     fn clone_box(&self) -> Box<dyn PullRequestSource>;
     fn status(&self) -> GhStatus;
     fn current_user(&self) -> Result<String>;
-    fn fetch_my_prs(&self) -> Result<Vec<PullRequest>>;
+    fn fetch_my_prs(&self, login: &str) -> Result<Vec<PullRequest>>;
     fn fetch_review_requests(&self, login: &str) -> Result<Vec<PullRequest>>;
     fn fetch_pr_detail(&self, pr: &PullRequest) -> Result<PullRequestDetail>;
     fn fetch_pr_discussion(&self, _pr: &PullRequest) -> Result<Vec<crate::model::DiscussionItem>> {

@@ -18,7 +18,7 @@ use std::time::Duration;
 
 pub fn run(client: Box<dyn PullRequestSource>) -> Result<()> {
     let mut app = App::new(client);
-    app.refresh();
+    app.refresh_async();
 
     let mut terminal = setup_terminal()?;
     let result = run_app(&mut terminal, &mut app);
@@ -58,7 +58,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
                     KeyCode::Down | KeyCode::Char('j') => app.next(),
                     KeyCode::Up | KeyCode::Char('k') => app.previous(),
                     KeyCode::Char(' ') | KeyCode::Char('o') => app.toggle_selected_group(),
-                    KeyCode::Char('r') => app.refresh(),
+                    KeyCode::Char('r') => app.refresh_async(),
                     KeyCode::Char('b') => app.open_selected_in_browser(),
                     KeyCode::Enter => app.open_selected_detail(),
                     _ => {}
@@ -99,7 +99,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let width = chunks[0].width as usize;
     let mut lines = Vec::new();
 
-    lines.push(Line::from(vec![
+    let mut header = vec![
         Span::styled("GH-VIEW", theme::accent().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(
@@ -109,7 +109,12 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 .unwrap_or_else(|| "@loading".to_owned()),
             theme::muted(),
         ),
-    ]));
+    ];
+    if app.dashboard_loading {
+        header.push(Span::raw("  "));
+        header.push(Span::styled("loading…", theme::muted()));
+    }
+    lines.push(Line::from(header));
     lines.push(rule_line(width));
     for (index, row) in rows.iter().enumerate() {
         match row {

@@ -4,6 +4,9 @@ use std::collections::BTreeSet;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
+type DashboardLoad = Result<(String, Vec<PullRequest>, Vec<PullRequest>), String>;
+type DashboardReceiver = Receiver<DashboardLoad>;
+
 pub struct App {
     client: Box<dyn PullRequestSource>,
     dashboard: Dashboard,
@@ -19,6 +22,8 @@ pub struct App {
     pub active_detail_pane: DetailPane,
     pub detail_status: DetailStatus,
     pub discussion_status: DiscussionStatus,
+    pub dashboard_loading: bool,
+    dashboard_rx: Option<DashboardReceiver>,
     detail_rx: Option<Receiver<Result<PullRequestDetail, String>>>,
     discussion_rx: Option<Receiver<Result<Vec<crate::model::DiscussionItem>, String>>>,
 }
@@ -40,14 +45,39 @@ impl App {
             active_detail_pane: DetailPane::Description,
             detail_status: DetailStatus::Idle,
             discussion_status: DiscussionStatus::Idle,
+            dashboard_loading: false,
+            dashboard_rx: None,
             detail_rx: None,
             discussion_rx: None,
         }
     }
 
+    #[cfg(test)]
     pub fn refresh(&mut self) {
-        let result = self.refresh_dashboard();
+        let result = refresh_dashboard(self.client.clone(), self.current_user.clone());
+        self.apply_refresh_result(result.map_err(|error| error.to_string()));
+    }
 
+    pub fn refresh_async(&mut self) {
+        if self.dashboard_loading {
+            return;
+        }
+
+        let client = self.client.clone();
+        let current_user = self.current_user.clone();
+        let (tx, rx) = mpsc::channel();
+        self.dashboard_rx = Some(rx);
+        self.dashboard_loading = true;
+
+        thread::spawn(move || {
+            let result = refresh_dashboard(client, current_user).map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
+    fn apply_refresh_result(&mut self, result: DashboardLoad) {
+        self.dashboard_loading = false;
+        self.dashboard_rx = None;
         match result {
             Ok((user, my_prs, reviews)) => {
                 self.current_user = Some(user);
@@ -62,35 +92,10 @@ impl App {
                 self.clamp_selection();
             }
             Err(error) => {
-                self.status = classify_refresh_error(error.to_string());
+                self.status = classify_refresh_error(error);
                 self.dashboard = Dashboard::default();
             }
         }
-    }
-
-    fn refresh_dashboard(
-        &mut self,
-    ) -> anyhow::Result<(String, Vec<PullRequest>, Vec<PullRequest>)> {
-        let user = match &self.current_user {
-            Some(user) => user.clone(),
-            None => self.client.current_user()?,
-        };
-
-        let my_client = self.client.clone();
-        let review_client = self.client.clone();
-        let review_user = user.clone();
-        let my_handle = thread::spawn(move || my_client.fetch_my_prs());
-        let review_handle =
-            thread::spawn(move || review_client.fetch_review_requests(&review_user));
-
-        let my_prs = my_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("authored PR fetch thread panicked"))??;
-        let reviews = review_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("review-request fetch thread panicked"))??;
-
-        Ok((user, my_prs, reviews))
     }
 
     pub fn rows(&self) -> Vec<Row<'_>> {
@@ -118,9 +123,11 @@ impl App {
         );
 
         if self.dashboard.is_empty() {
-            rows.push(Row::Message(
-                "No open PRs found. Press r to refresh.".to_owned(),
-            ));
+            rows.push(Row::Message(if self.dashboard_loading {
+                "Loading pull requests…".to_owned()
+            } else {
+                "No open PRs found. Press r to refresh.".to_owned()
+            }));
         }
 
         rows
@@ -174,8 +181,21 @@ impl App {
     }
 
     pub fn poll_background(&mut self) {
+        self.poll_dashboard_load();
         self.poll_detail_load();
         self.poll_discussion_load();
+    }
+
+    fn poll_dashboard_load(&mut self) {
+        let Some(rx) = &self.dashboard_rx else {
+            return;
+        };
+
+        let Ok(result) = rx.try_recv() else {
+            return;
+        };
+
+        self.apply_refresh_result(result);
     }
 
     fn poll_detail_load(&mut self) {
@@ -386,6 +406,32 @@ impl App {
             self.status = AppStatus::Error(format!("failed to open browser: {error}"));
         }
     }
+}
+
+fn refresh_dashboard(
+    client: Box<dyn PullRequestSource>,
+    current_user: Option<String>,
+) -> anyhow::Result<(String, Vec<PullRequest>, Vec<PullRequest>)> {
+    let user = match current_user {
+        Some(user) => user,
+        None => client.current_user()?,
+    };
+
+    let my_client = client.clone();
+    let review_client = client.clone();
+    let review_user = user.clone();
+    let my_user = user.clone();
+    let my_handle = thread::spawn(move || my_client.fetch_my_prs(&my_user));
+    let review_handle = thread::spawn(move || review_client.fetch_review_requests(&review_user));
+
+    let my_prs = my_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("authored PR fetch thread panicked"))??;
+    let reviews = review_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("review-request fetch thread panicked"))??;
+
+    Ok((user, my_prs, reviews))
 }
 
 fn classify_refresh_error(message: String) -> AppStatus {
@@ -604,7 +650,7 @@ mod tests {
                 .map_err(|message| anyhow!(message))
         }
 
-        fn fetch_my_prs(&self) -> Result<Vec<PullRequest>> {
+        fn fetch_my_prs(&self, _login: &str) -> Result<Vec<PullRequest>> {
             self.my_prs.clone().map_err(|message| anyhow!(message))
         }
 

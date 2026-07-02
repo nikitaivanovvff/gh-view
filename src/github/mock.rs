@@ -29,7 +29,7 @@ impl PullRequestSource for MockGhClient {
         Ok("nikita".to_owned())
     }
 
-    fn fetch_my_prs(&self) -> Result<Vec<PullRequest>> {
+    fn fetch_my_prs(&self, _login: &str) -> Result<Vec<PullRequest>> {
         Ok(vec![
             mock_pr(MockPr {
                 repo: "earendil/gh-view",

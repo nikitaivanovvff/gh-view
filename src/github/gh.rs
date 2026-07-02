@@ -5,12 +5,9 @@ use crate::model::{
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use serde_json::Value;
 use std::process::Command;
 
 const SEARCH_FIELDS: &str = "repository,number,title,author,updatedAt,state,isDraft,url";
-const DASHBOARD_SUMMARY_FIELDS: &str =
-    "reviewDecision,statusCheckRollup,reviewRequests,latestReviews";
 const DETAIL_FIELDS: &str = "number,title,author,updatedAt,isDraft,url,body,state,mergeable,headRefName,baseRefName,reviewDecision,statusCheckRollup,comments,reviews";
 const REVIEW_THREADS_QUERY: &str = r#"
 query($owner: String!, $name: String!, $number: Int!) {
@@ -78,38 +75,24 @@ impl GhClient {
 
         let rows: Vec<SearchPullRequest> = serde_json::from_slice(&output.stdout)
             .context("failed to parse gh search prs JSON output")?;
-        rows.into_iter()
-            .map(PullRequest::from)
-            .map(|pr| self.enrich_dashboard_pr(pr))
-            .collect()
+        Ok(rows.into_iter().map(PullRequest::from).collect())
     }
 
-    fn enrich_dashboard_pr(&self, mut pr: PullRequest) -> Result<PullRequest> {
-        let number = pr.number.to_string();
+    fn search_dashboard_graphql(&self, query: &str) -> Result<Vec<PullRequest>> {
+        let graphql = dashboard_search_query(query);
+        let query_field = format!("query={graphql}");
         let output = Command::new("gh")
-            .args([
-                "pr",
-                "view",
-                &number,
-                "--repo",
-                &pr.repo,
-                "--json",
-                DASHBOARD_SUMMARY_FIELDS,
-            ])
+            .args(["api", "graphql", "-f", &query_field])
             .output()
-            .context("failed to run gh pr view for dashboard summary")?;
+            .context("failed to run gh api graphql for dashboard")?;
 
         if !output.status.success() {
             bail!(command_error(&output));
         }
 
-        let summary: DashboardPullRequestSummary = serde_json::from_slice(&output.stdout)
-            .context("failed to parse gh pr view dashboard summary JSON output")?;
-        pr.review_requested = summary.requested_reviewers();
-        pr.reviewers = summary.reviewers();
-        pr.review_decision = summary.review_decision.filter(|value| !value.is_empty());
-        pr.check_status = summarize_checks(summary.status_check_rollup.as_deref().unwrap_or(&[]));
-        Ok(pr)
+        let response: DashboardSearchResponse = serde_json::from_slice(&output.stdout)
+            .context("failed to parse gh dashboard GraphQL output")?;
+        Ok(response.into_pull_requests())
     }
 
     fn pr_view(&self, pr: &PullRequest) -> Result<PullRequestDetail> {
@@ -197,16 +180,21 @@ impl PullRequestSource for GhClient {
         self.current_user_login()
     }
 
-    fn fetch_my_prs(&self) -> Result<Vec<PullRequest>> {
-        self.search_prs(&["--author", "@me"])
+    fn fetch_my_prs(&self, login: &str) -> Result<Vec<PullRequest>> {
+        self.search_dashboard_graphql(&format!("is:pr is:open author:{login} archived:false"))
+            .or_else(|_| self.search_prs(&["--author", login]))
     }
 
     fn fetch_review_requests(&self, login: &str) -> Result<Vec<PullRequest>> {
-        self.search_prs(&["--review-requested", login]).map(|prs| {
+        self.search_dashboard_graphql(&format!(
+            "is:pr is:open review-requested:{login} archived:false"
+        ))
+        .map(|prs| {
             prs.into_iter()
                 .filter(|pr| pr.review_requested.iter().any(|reviewer| reviewer == login))
                 .collect()
         })
+        .or_else(|_| self.search_prs(&["--review-requested", login]))
     }
 
     fn fetch_pr_detail(&self, pr: &PullRequest) -> Result<PullRequestDetail> {
@@ -232,6 +220,59 @@ pub fn gh_version() -> Option<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout.lines().next().map(str::trim).map(str::to_owned)
+}
+
+fn dashboard_search_query(query: &str) -> String {
+    let escaped_query = query.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        r#"{{
+  search(query: "{escaped_query}", type: ISSUE, first: 50) {{
+    nodes {{
+      ... on PullRequest {{
+        repository {{ nameWithOwner }}
+        number
+        title
+        url
+        isDraft
+        reviewDecision
+        updatedAt
+        author {{ login }}
+        reviews(last: 20) {{
+          nodes {{
+            author {{ login __typename }}
+            state
+          }}
+        }}
+        reviewRequests(first: 20) {{
+          nodes {{
+            requestedReviewer {{
+              ... on User {{ login __typename }}
+              ... on Team {{ name __typename }}
+            }}
+          }}
+        }}
+        commits(last: 1) {{
+          nodes {{
+            commit {{
+              statusCheckRollup {{ state }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}"#
+    )
+}
+
+fn dashboard_check_status(state: &str) -> Option<String> {
+    match state {
+        "SUCCESS" => Some("passing".to_owned()),
+        "FAILURE" | "ERROR" => Some("failing".to_owned()),
+        "PENDING" | "EXPECTED" => Some("pending".to_owned()),
+        "" => None,
+        _ => Some("pending".to_owned()),
+    }
 }
 
 fn command_error(output: &std::process::Output) -> String {
@@ -261,17 +302,6 @@ struct SearchPullRequest {
     state: String,
     is_draft: bool,
     url: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DashboardPullRequestSummary {
-    review_decision: Option<String>,
-    status_check_rollup: Option<Vec<CheckRun>>,
-    #[serde(default)]
-    review_requests: Value,
-    #[serde(default)]
-    latest_reviews: Vec<GhReview>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -322,6 +352,105 @@ struct GhReview {
     body: String,
     #[serde(default)]
     submitted_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardSearchResponse {
+    data: DashboardSearchData,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardSearchData {
+    search: DashboardSearchConnection,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardSearchConnection {
+    #[serde(default)]
+    nodes: Vec<DashboardSearchPullRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardSearchPullRequest {
+    repository: Repository,
+    number: u64,
+    title: String,
+    author: Option<User>,
+    review_decision: Option<String>,
+    updated_at: String,
+    #[serde(default)]
+    is_draft: bool,
+    url: String,
+    reviews: DashboardReviewConnection,
+    review_requests: DashboardReviewRequestConnection,
+    commits: DashboardCommitConnection,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardReviewConnection {
+    #[serde(default)]
+    nodes: Vec<DashboardReview>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardReview {
+    author: Option<DashboardActor>,
+    #[serde(default)]
+    state: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardReviewRequestConnection {
+    #[serde(default)]
+    nodes: Vec<DashboardReviewRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardReviewRequest {
+    requested_reviewer: Option<DashboardActor>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardActor {
+    #[serde(default)]
+    login: String,
+    #[serde(default, rename = "__typename")]
+    typename: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardCommitConnection {
+    #[serde(default)]
+    nodes: Vec<DashboardCommitNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardCommitNode {
+    commit: DashboardCommit,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardCommit {
+    status_check_rollup: Option<DashboardStatusCheckRollup>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardStatusCheckRollup {
+    #[serde(default)]
+    state: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,50 +558,77 @@ impl From<SearchPullRequest> for PullRequest {
     }
 }
 
-impl DashboardPullRequestSummary {
-    fn requested_reviewers(&self) -> Vec<String> {
-        let mut reviewers = Vec::new();
-        collect_logins(&self.review_requests, &mut reviewers);
-        reviewers.sort();
-        reviewers.dedup();
-        reviewers
-    }
-
-    fn reviewers(&self) -> Vec<Reviewer> {
-        let mut reviewers: Vec<Reviewer> = self
-            .requested_reviewers()
+impl DashboardSearchResponse {
+    fn into_pull_requests(self) -> Vec<PullRequest> {
+        self.data
+            .search
+            .nodes
             .into_iter()
-            .map(|login| Reviewer {
-                login,
+            .map(DashboardSearchPullRequest::into_pull_request)
+            .collect()
+    }
+}
+
+impl DashboardSearchPullRequest {
+    fn into_pull_request(self) -> PullRequest {
+        let mut reviewers: Vec<Reviewer> = self
+            .review_requests
+            .nodes
+            .iter()
+            .filter_map(|request| request.requested_reviewer.as_ref())
+            .filter(|actor| actor.typename != "Bot" && !actor.login.is_empty())
+            .map(|actor| Reviewer {
+                login: actor.login.clone(),
                 state: ReviewerState::Requested,
             })
             .collect();
 
-        for review in &self.latest_reviews {
-            let login = review.author_login();
-            if login.is_empty() {
+        for review in self.reviews.nodes {
+            let Some(actor) = review.author else {
+                continue;
+            };
+            if actor.typename == "Bot" || actor.login.is_empty() {
                 continue;
             }
             upsert_reviewer(
                 &mut reviewers,
                 Reviewer {
-                    login,
+                    login: actor.login,
                     state: reviewer_state(&review.state),
                 },
             );
         }
-
         reviewers.sort_by(|left, right| left.login.cmp(&right.login));
-        reviewers
-    }
-}
+        reviewers.dedup_by(|left, right| left.login == right.login);
 
-impl GhReview {
-    fn author_login(&self) -> String {
-        self.author
-            .as_ref()
-            .map(|author| author.login.clone())
-            .unwrap_or_default()
+        let review_requested = self
+            .review_requests
+            .nodes
+            .into_iter()
+            .filter_map(|request| request.requested_reviewer)
+            .filter(|actor| actor.typename != "Bot" && !actor.login.is_empty())
+            .map(|actor| actor.login)
+            .collect();
+
+        PullRequest {
+            repo: self.repository.name_with_owner,
+            number: self.number,
+            title: self.title,
+            author: self.author.map(|author| author.login).unwrap_or_default(),
+            url: self.url,
+            updated_at: self.updated_at,
+            state: "OPEN".to_owned(),
+            is_draft: self.is_draft,
+            review_decision: self.review_decision.filter(|value| !value.is_empty()),
+            check_status: self
+                .commits
+                .nodes
+                .first()
+                .and_then(|node| node.commit.status_check_rollup.as_ref())
+                .and_then(|rollup| dashboard_check_status(&rollup.state)),
+            reviewers,
+            review_requested,
+        }
     }
 }
 
@@ -597,27 +753,6 @@ fn reviewer_state(state: &str) -> ReviewerState {
         "APPROVED" => ReviewerState::Approved,
         "CHANGES_REQUESTED" => ReviewerState::ChangesRequested,
         _ => ReviewerState::Commented,
-    }
-}
-
-fn collect_logins(value: &Value, logins: &mut Vec<String>) {
-    match value {
-        Value::Object(object) => {
-            if let Some(login) = object.get("login").and_then(Value::as_str)
-                && !login.is_empty()
-            {
-                logins.push(login.to_owned());
-            }
-            for child in object.values() {
-                collect_logins(child, logins);
-            }
-        }
-        Value::Array(values) => {
-            for child in values {
-                collect_logins(child, logins);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -800,45 +935,6 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_summary_collects_requested_and_latest_reviewers() {
-        let summary = DashboardPullRequestSummary {
-            review_decision: Some("APPROVED".to_owned()),
-            status_check_rollup: Some(vec![CheckRun {
-                conclusion: Some("SUCCESS".to_owned()),
-                state: None,
-                status: None,
-            }]),
-            review_requests: serde_json::json!([
-                { "requestedReviewer": { "login": "alice" } },
-                { "requestedReviewer": { "slug": "platform-team" } }
-            ]),
-            latest_reviews: vec![GhReview {
-                author: Some(User {
-                    login: "bob".to_owned(),
-                }),
-                state: "APPROVED".to_owned(),
-                body: String::new(),
-                submitted_at: String::new(),
-            }],
-        };
-
-        assert_eq!(summary.requested_reviewers(), vec!["alice".to_owned()]);
-        assert_eq!(
-            summary.reviewers(),
-            vec![
-                Reviewer {
-                    login: "alice".to_owned(),
-                    state: ReviewerState::Requested,
-                },
-                Reviewer {
-                    login: "bob".to_owned(),
-                    state: ReviewerState::Approved,
-                }
-            ]
-        );
-    }
-
-    #[test]
     fn converts_search_pull_requests_to_domain_model() {
         let pr = PullRequest::from(SearchPullRequest {
             repository: Repository {
@@ -865,6 +961,76 @@ mod tests {
         assert_eq!(pr.author, "alice");
         assert_eq!(pr.state, "OPEN");
         assert_eq!(pr.check_status.as_deref(), Some("passing"));
+    }
+
+    #[test]
+    fn converts_dashboard_search_response_to_domain_model() {
+        let response: DashboardSearchResponse = serde_json::from_str(
+            r#"
+            {
+              "data": {
+                "search": {
+                  "nodes": [{
+                    "repository": { "nameWithOwner": "owner/repo" },
+                    "number": 12,
+                    "title": "Add feature",
+                    "author": { "login": "carol" },
+                    "reviewDecision": "REVIEW_REQUIRED",
+                    "updatedAt": "2026-07-01T10:00:00Z",
+                    "isDraft": false,
+                    "url": "https://example.test/pr",
+                    "reviews": {
+                      "nodes": [
+                        {
+                          "author": { "login": "bob", "__typename": "User" },
+                          "state": "APPROVED"
+                        },
+                        {
+                          "author": { "login": "dependabot", "__typename": "Bot" },
+                          "state": "COMMENTED"
+                        }
+                      ]
+                    },
+                    "reviewRequests": {
+                      "nodes": [{
+                        "requestedReviewer": { "login": "alice", "__typename": "User" }
+                      }]
+                    },
+                    "commits": {
+                      "nodes": [{
+                        "commit": { "statusCheckRollup": { "state": "SUCCESS" } }
+                      }]
+                    }
+                  }]
+                }
+              }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let prs = response.into_pull_requests();
+
+        assert_eq!(prs.len(), 1);
+        let pr = &prs[0];
+        assert_eq!(pr.repo, "owner/repo");
+        assert_eq!(pr.author, "carol");
+        assert_eq!(pr.review_decision.as_deref(), Some("REVIEW_REQUIRED"));
+        assert_eq!(pr.check_status.as_deref(), Some("passing"));
+        assert_eq!(pr.review_requested, vec!["alice".to_owned()]);
+        assert_eq!(
+            pr.reviewers,
+            vec![
+                Reviewer {
+                    login: "alice".to_owned(),
+                    state: ReviewerState::Requested,
+                },
+                Reviewer {
+                    login: "bob".to_owned(),
+                    state: ReviewerState::Approved,
+                }
+            ]
+        );
     }
 
     #[test]
