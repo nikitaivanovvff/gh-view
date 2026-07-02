@@ -83,4 +83,25 @@ mod tests {
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
     }
+
+    #[test]
+    fn default_command_is_dashboard() {
+        let cli = Cli::try_parse_from(["gh-view"]).unwrap();
+        assert!(!cli.mock);
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_global_mock_before_subcommand() {
+        let cli = Cli::try_parse_from(["gh-view", "--mock", "doctor"]).unwrap();
+        assert!(cli.mock);
+        assert!(matches!(cli.command, Some(Commands::Doctor)));
+    }
+
+    #[test]
+    fn parses_global_mock_after_subcommand() {
+        let cli = Cli::try_parse_from(["gh-view", "dashboard", "--mock"]).unwrap();
+        assert!(cli.mock);
+        assert!(matches!(cli.command, Some(Commands::Dashboard)));
+    }
 }

@@ -769,3 +769,154 @@ mod theme {
         Style::default().fg(Color::Rgb(116, 111, 132))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derives_pr_status_text() {
+        let mut pr = pr();
+        assert_eq!(pr_status(&pr), "needs review");
+
+        pr.review_decision = Some("APPROVED".to_owned());
+        assert_eq!(pr_status(&pr), "approved");
+
+        pr.review_decision = Some("CHANGES_REQUESTED".to_owned());
+        assert_eq!(pr_status(&pr), "changes requested");
+
+        pr.review_decision = Some(String::new());
+        assert_eq!(pr_status(&pr), "needs review");
+
+        pr.is_draft = true;
+        assert_eq!(pr_status(&pr), "draft");
+    }
+
+    #[test]
+    fn formats_ci_and_age_labels() {
+        assert_eq!(ci_text(Some("passing")), "ci✓");
+        assert_eq!(ci_text(Some("failing")), "ci×");
+        assert_eq!(ci_text(Some("pending")), "ci…");
+        assert_eq!(ci_text(None), "ci-");
+        assert_eq!(age_label("2026-06-30T10:00:00Z"), "today");
+        assert_eq!(age_label("2026-07-01T10:00:00Z"), "07-01");
+        assert_eq!(age_label("bad"), "—");
+    }
+
+    #[test]
+    fn truncates_with_ellipsis() {
+        assert_eq!(truncate("hello", 10), "hello");
+        assert_eq!(truncate("hello", 4), "hel…");
+        assert_eq!(truncate("hello", 1), "…");
+    }
+
+    #[test]
+    fn max_scroll_saturates_to_visible_content() {
+        assert_eq!(max_scroll(3, 10), 0);
+        assert_eq!(max_scroll(10, 3), 7);
+    }
+
+    #[test]
+    fn section_count_sums_groups_until_next_section() {
+        let pr = pr();
+        let rows = vec![
+            Row::Section("My PRs"),
+            Row::Group {
+                repo: "owner/a",
+                count: 2,
+                open: true,
+            },
+            Row::Pr(&pr),
+            Row::Section("Awaiting Review"),
+            Row::Group {
+                repo: "owner/b",
+                count: 3,
+                open: true,
+            },
+        ];
+
+        assert_eq!(section_count(&rows, 0), 2);
+        assert_eq!(section_count(&rows, 3), 3);
+    }
+
+    #[test]
+    fn discussion_lines_include_replies_and_loading_state() {
+        let item = DiscussionItem {
+            kind: DiscussionKind::ReviewThread { resolved: false },
+            author: "alice".to_owned(),
+            body: "Please adjust this".to_owned(),
+            created_at: "2026-07-01T10:00:00Z".to_owned(),
+            url: "https://example.test".to_owned(),
+            replies: vec![crate::model::DiscussionReply {
+                author: "bob".to_owned(),
+                body: "Done".to_owned(),
+                created_at: "2026-07-01T10:05:00Z".to_owned(),
+            }],
+            code_context: None,
+        };
+
+        let lines = discussion_lines(&item, 0, 1, 80, &DiscussionStatus::Loading);
+        let text = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("thread · unresolved · loading threads…"));
+        assert!(text.contains("@alice"));
+        assert!(text.contains("@bob"));
+    }
+
+    #[test]
+    fn code_context_lines_render_empty_and_context_cases() {
+        let mut item = DiscussionItem {
+            kind: DiscussionKind::IssueComment,
+            author: "alice".to_owned(),
+            body: "Comment".to_owned(),
+            created_at: "2026-07-01T10:00:00Z".to_owned(),
+            url: "https://example.test".to_owned(),
+            replies: Vec::new(),
+            code_context: None,
+        };
+        assert!(
+            code_context_lines(&item, 80)
+                .iter()
+                .any(|line| line.to_string().contains("no code context"))
+        );
+
+        item.code_context = Some(crate::model::CodeContext {
+            path: "src/main.rs".to_owned(),
+            start_line: Some(10),
+            highlighted_line: Some(11),
+            lines: vec![crate::model::CodeContextLine {
+                number: Some(11),
+                kind: CodeLineKind::Added,
+                text: "let value = true;".to_owned(),
+            }],
+        });
+
+        let text = code_context_lines(&item, 80)
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("src/main.rs:11"));
+        assert!(text.contains("let value = true;"));
+    }
+
+    fn pr() -> PullRequest {
+        PullRequest {
+            repo: "owner/repo".to_owned(),
+            number: 1,
+            title: "Title".to_owned(),
+            author: "author".to_owned(),
+            url: "https://example.test".to_owned(),
+            updated_at: "2026-07-01T10:00:00Z".to_owned(),
+            state: "OPEN".to_owned(),
+            is_draft: false,
+            review_decision: None,
+            check_status: None,
+            reviewers: Vec::new(),
+        }
+    }
+}

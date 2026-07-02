@@ -60,6 +60,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_dashboard_is_empty() {
+        assert!(Dashboard::default().is_empty());
+    }
+
+    #[test]
     fn groups_prs_by_repo() {
         let dashboard = Dashboard::from_prs(
             vec![
@@ -74,6 +79,28 @@ mod tests {
         assert_eq!(dashboard.my_prs[0].repo, "owner/a");
         assert_eq!(dashboard.my_prs[1].repo, "owner/b");
         assert_eq!(dashboard.my_prs[1].prs[0].number, 3);
+    }
+
+    #[test]
+    fn reports_non_empty_when_any_section_has_prs() {
+        assert!(!Dashboard::from_prs(vec![pr("owner/a", 1, "2026-06-01")], vec![]).is_empty());
+        assert!(!Dashboard::from_prs(vec![], vec![pr("owner/a", 1, "2026-06-01")]).is_empty());
+    }
+
+    #[test]
+    fn returns_unique_repo_names_across_sections() {
+        let dashboard = Dashboard::from_prs(
+            vec![pr("owner/a", 1, "2026-06-01")],
+            vec![
+                pr("owner/a", 2, "2026-06-02"),
+                pr("owner/b", 3, "2026-06-03"),
+            ],
+        );
+
+        assert_eq!(
+            repo_names(&dashboard),
+            ["owner/a".to_owned(), "owner/b".to_owned()].into()
+        );
     }
 
     fn pr(repo: &str, number: u64, updated_at: &str) -> PullRequest {

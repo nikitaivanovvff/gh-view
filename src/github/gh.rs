@@ -611,6 +611,29 @@ mod tests {
             }]),
             Some("failing".to_owned())
         );
+        assert_eq!(
+            summarize_checks(vec![CheckRun {
+                conclusion: None,
+                state: Some("IN_PROGRESS".to_owned()),
+                status: None,
+            }]),
+            Some("pending".to_owned())
+        );
+        assert_eq!(
+            summarize_checks(vec![
+                CheckRun {
+                    conclusion: Some("SUCCESS".to_owned()),
+                    state: None,
+                    status: None,
+                },
+                CheckRun {
+                    conclusion: Some("TIMED_OUT".to_owned()),
+                    state: None,
+                    status: None,
+                }
+            ]),
+            Some("failing".to_owned())
+        );
     }
 
     #[test]
@@ -635,6 +658,92 @@ mod tests {
         assert_eq!(lines[2].kind, CodeLineKind::Added);
         assert_eq!(lines[3].number, Some(12));
         assert_eq!(lines[3].text, "unchanged");
+    }
+
+    #[test]
+    fn converts_search_pull_requests_to_domain_model() {
+        let pr = PullRequest::from(SearchPullRequest {
+            repository: Repository {
+                name_with_owner: "owner/repo".to_owned(),
+            },
+            number: 12,
+            title: "Add feature".to_owned(),
+            author: Some(User {
+                login: "alice".to_owned(),
+            }),
+            review_decision: Some("APPROVED".to_owned()),
+            status_check_rollup: Some(vec![CheckRun {
+                conclusion: Some("SUCCESS".to_owned()),
+                state: None,
+                status: None,
+            }]),
+            updated_at: "2026-07-01T10:00:00Z".to_owned(),
+            state: "OPEN".to_owned(),
+            is_draft: false,
+            url: "https://example.test/pr".to_owned(),
+        });
+
+        assert_eq!(pr.repo, "owner/repo");
+        assert_eq!(pr.author, "alice");
+        assert_eq!(pr.state, "OPEN");
+        assert_eq!(pr.check_status.as_deref(), Some("passing"));
+    }
+
+    #[test]
+    fn converts_detail_pull_requests_to_domain_model() {
+        let detail = DetailPullRequest {
+            number: 5,
+            title: "Fix bug".to_owned(),
+            author: None,
+            review_decision: None,
+            status_check_rollup: None,
+            updated_at: "2026-07-01T10:00:00Z".to_owned(),
+            is_draft: false,
+            url: "https://example.test/pr".to_owned(),
+            body: "body".to_owned(),
+            state: "OPEN".to_owned(),
+            mergeable: Some("MERGEABLE".to_owned()),
+            head_ref_name: "feature".to_owned(),
+            base_ref_name: "main".to_owned(),
+            comments: vec![GhComment {
+                author: Some(User {
+                    login: "bob".to_owned(),
+                }),
+                body: "Looks good".to_owned(),
+                created_at: "2026-07-01T11:00:00Z".to_owned(),
+                url: "https://example.test/comment".to_owned(),
+            }],
+            reviews: vec![GhReview {
+                author: Some(User {
+                    login: "carol".to_owned(),
+                }),
+                state: "APPROVED".to_owned(),
+                body: "approved".to_owned(),
+                submitted_at: "2026-07-01T12:00:00Z".to_owned(),
+            }],
+        }
+        .into_detail("owner/repo".to_owned());
+
+        assert_eq!(detail.pr.repo, "owner/repo");
+        assert_eq!(detail.pr.author, "");
+        assert_eq!(detail.body, "body");
+        assert_eq!(detail.discussion.len(), 1);
+        assert_eq!(detail.discussion[0].author, "bob");
+        assert_eq!(detail.reviews.len(), 1);
+        assert_eq!(detail.reviews[0].author, "carol");
+    }
+
+    #[test]
+    fn skips_review_threads_without_comments() {
+        let thread = ReviewThreadNode {
+            is_resolved: true,
+            path: "src/main.rs".to_owned(),
+            line: Some(1),
+            original_line: None,
+            comments: ReviewThreadCommentConnection { nodes: Vec::new() },
+        };
+
+        assert!(thread.into_discussion_item().is_none());
     }
 
     #[test]
@@ -691,5 +800,16 @@ mod tests {
         let context = items[0].code_context.as_ref().unwrap();
         assert_eq!(context.path, "src/main.rs");
         assert_eq!(context.highlighted_line, Some(42));
+    }
+
+    #[test]
+    fn parses_hunks_without_header_as_context_without_numbers() {
+        let lines = parse_diff_hunk("plain line\n+added");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].number, None);
+        assert_eq!(lines[0].kind, CodeLineKind::Context);
+        assert_eq!(lines[1].number, None);
+        assert_eq!(lines[1].kind, CodeLineKind::Added);
     }
 }

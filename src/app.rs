@@ -427,7 +427,7 @@ pub enum AppView {
     Detail,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppStatus {
     Ready,
     MissingGh,
@@ -508,6 +508,279 @@ fn push_groups<'a>(rows: &mut Vec<Row<'a>>, groups: &'a [RepoGroup], collapsed: 
 
         if open {
             rows.extend(group.prs.iter().map(Row::Pr));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::github::GhStatus;
+    use crate::model::{DiscussionItem, DiscussionKind};
+    use anyhow::{Result, anyhow};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::{Duration, Instant};
+
+    #[derive(Clone)]
+    struct TestSource {
+        current_user: Result<String, String>,
+        my_prs: Result<Vec<PullRequest>, String>,
+        review_prs: Result<Vec<PullRequest>, String>,
+        detail: Result<PullRequestDetail, String>,
+        discussion: Result<Vec<DiscussionItem>, String>,
+        current_user_calls: Arc<AtomicUsize>,
+    }
+
+    impl TestSource {
+        fn ok() -> Self {
+            let main_pr = pr("owner/repo", 1);
+            Self {
+                current_user: Ok("octocat".to_owned()),
+                my_prs: Ok(vec![main_pr.clone()]),
+                review_prs: Ok(vec![pr("owner/other", 2)]),
+                detail: Ok(detail(main_pr)),
+                discussion: Ok(vec![discussion("alice", "2026-07-01T10:00:00Z")]),
+                current_user_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    impl PullRequestSource for TestSource {
+        fn clone_box(&self) -> Box<dyn PullRequestSource> {
+            Box::new(self.clone())
+        }
+
+        fn status(&self) -> GhStatus {
+            GhStatus::Ready {
+                version: "test-gh".to_owned(),
+            }
+        }
+
+        fn current_user(&self) -> Result<String> {
+            self.current_user_calls.fetch_add(1, Ordering::SeqCst);
+            self.current_user
+                .clone()
+                .map_err(|message| anyhow!(message))
+        }
+
+        fn fetch_my_prs(&self) -> Result<Vec<PullRequest>> {
+            self.my_prs.clone().map_err(|message| anyhow!(message))
+        }
+
+        fn fetch_review_requests(&self, _login: &str) -> Result<Vec<PullRequest>> {
+            self.review_prs.clone().map_err(|message| anyhow!(message))
+        }
+
+        fn fetch_pr_detail(&self, _pr: &PullRequest) -> Result<PullRequestDetail> {
+            self.detail.clone().map_err(|message| anyhow!(message))
+        }
+
+        fn fetch_pr_discussion(&self, _pr: &PullRequest) -> Result<Vec<DiscussionItem>> {
+            self.discussion.clone().map_err(|message| anyhow!(message))
+        }
+    }
+
+    #[test]
+    fn refresh_loads_dashboard_and_caches_current_user() {
+        let source = TestSource::ok();
+        let calls = source.current_user_calls.clone();
+        let mut app = App::new(Box::new(source));
+
+        app.refresh();
+        app.refresh();
+
+        assert_eq!(app.current_user.as_deref(), Some("octocat"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(app.status, AppStatus::Ready));
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+        );
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+        );
+    }
+
+    #[test]
+    fn refresh_classifies_missing_gh_errors() {
+        let mut source = TestSource::ok();
+        source.current_user = Err("failed to run gh api user".to_owned());
+        let mut app = App::new(Box::new(source));
+
+        app.refresh();
+
+        assert_eq!(app.status, AppStatus::MissingGh);
+        assert!(
+            matches!(app.rows().first(), Some(Row::Message(message)) if message.contains("not found"))
+        );
+    }
+
+    #[test]
+    fn refresh_classifies_auth_errors() {
+        let mut source = TestSource::ok();
+        source.current_user = Err("authentication required; run gh auth login".to_owned());
+        let mut app = App::new(Box::new(source));
+
+        app.refresh();
+
+        assert!(matches!(app.status, AppStatus::Unauthenticated(_)));
+    }
+
+    #[test]
+    fn navigation_and_group_toggle_update_visible_rows() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+        app.refresh();
+
+        let expanded_count = app.rows().len();
+        app.next();
+        assert_eq!(app.selected, 1);
+        app.toggle_selected_group();
+
+        assert!(app.rows().len() < expanded_count);
+        assert!(matches!(
+            app.rows().get(1),
+            Some(Row::Group { open: false, .. })
+        ));
+        app.previous();
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn opening_detail_uses_placeholder_then_background_results() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+        app.refresh();
+        app.next();
+        app.next();
+        app.open_selected_detail();
+
+        assert_eq!(app.view, AppView::Detail);
+        assert_eq!(app.detail_status, DetailStatus::Loading);
+        assert_eq!(app.discussion_status, DiscussionStatus::Loading);
+        assert_eq!(app.detail.as_ref().unwrap().pr.number, 1);
+
+        poll_until_ready(&mut app);
+
+        assert_eq!(app.detail_status, DetailStatus::Ready);
+        assert_eq!(app.discussion_status, DiscussionStatus::Ready);
+        let detail = app.detail.as_ref().unwrap();
+        assert_eq!(detail.body, "Loaded body");
+        assert_eq!(detail.discussion.len(), 2);
+    }
+
+    #[test]
+    fn detail_load_preserves_dashboard_review_and_check_metadata_when_empty() {
+        let mut source = TestSource::ok();
+        let mut loaded = detail(pr("owner/repo", 1));
+        loaded.pr.review_decision = Some(String::new());
+        loaded.pr.check_status = Some(String::new());
+        source.detail = Ok(loaded);
+        let mut app = App::new(Box::new(source));
+
+        app.refresh();
+        app.next();
+        app.next();
+        app.open_selected_detail();
+        poll_until_ready(&mut app);
+
+        let pr = &app.detail.as_ref().unwrap().pr;
+        assert_eq!(pr.review_decision.as_deref(), Some("APPROVED"));
+        assert_eq!(pr.check_status.as_deref(), Some("passing"));
+    }
+
+    #[test]
+    fn detail_pane_focus_controls_active_scroll_target() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+        app.scroll_active_down();
+        assert_eq!(app.detail_scroll, 1);
+        assert_eq!(app.discussion_scroll, 0);
+
+        app.focus_discussion();
+        app.scroll_active_down();
+        assert_eq!(app.detail_scroll, 1);
+        assert_eq!(app.discussion_scroll, 1);
+
+        app.toggle_detail_pane();
+        assert_eq!(app.active_detail_pane, DetailPane::Description);
+        app.scroll_active_up();
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    #[test]
+    fn discussion_selection_wraps_and_resets_scroll() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut detail = detail(pr("owner/repo", 1));
+        detail.discussion = vec![
+            discussion("alice", "2026-07-01T10:00:00Z"),
+            discussion("bob", "2026-07-01T10:01:00Z"),
+        ];
+        app.detail = Some(detail);
+        app.discussion_scroll = 4;
+
+        app.previous_discussion();
+        assert_eq!(app.selected_discussion_index(), 1);
+        assert_eq!(app.discussion_scroll, 0);
+        app.next_discussion();
+        assert_eq!(app.selected_discussion_index(), 0);
+    }
+
+    fn poll_until_ready(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            app.poll_background();
+            if app.detail_status != DetailStatus::Loading
+                && app.discussion_status != DiscussionStatus::Loading
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("background loads did not finish");
+    }
+
+    fn pr(repo: &str, number: u64) -> PullRequest {
+        PullRequest {
+            repo: repo.to_owned(),
+            number,
+            title: format!("PR {number}"),
+            author: "author".to_owned(),
+            url: format!("https://github.com/{repo}/pull/{number}"),
+            updated_at: "2026-07-01T10:00:00Z".to_owned(),
+            state: "OPEN".to_owned(),
+            is_draft: false,
+            review_decision: Some("APPROVED".to_owned()),
+            check_status: Some("passing".to_owned()),
+            reviewers: vec!["reviewer".to_owned()],
+        }
+    }
+
+    fn detail(pr: PullRequest) -> PullRequestDetail {
+        PullRequestDetail {
+            pr,
+            body: "Loaded body".to_owned(),
+            state: "OPEN".to_owned(),
+            mergeable: Some("MERGEABLE".to_owned()),
+            head_ref: "feature".to_owned(),
+            base_ref: "main".to_owned(),
+            reviews: Vec::new(),
+            discussion: vec![discussion("carol", "2026-07-01T09:00:00Z")],
+        }
+    }
+
+    fn discussion(author: &str, created_at: &str) -> DiscussionItem {
+        DiscussionItem {
+            kind: DiscussionKind::IssueComment,
+            author: author.to_owned(),
+            body: "comment".to_owned(),
+            created_at: created_at.to_owned(),
+            url: format!("https://example.test/{author}"),
+            replies: Vec::new(),
+            code_context: None,
         }
     }
 }
