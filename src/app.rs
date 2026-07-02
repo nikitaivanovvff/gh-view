@@ -1,5 +1,5 @@
 use crate::github::PullRequestSource;
-use crate::model::{Dashboard, PullRequest, PullRequestDetail, RepoGroup, repo_names};
+use crate::model::{Dashboard, PullRequest, PullRequestDetail, RepoGroup};
 use std::collections::BTreeSet;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -7,7 +7,7 @@ use std::thread;
 pub struct App {
     client: Box<dyn PullRequestSource>,
     dashboard: Dashboard,
-    collapsed_repos: BTreeSet<String>,
+    collapsed_groups: BTreeSet<String>,
     pub current_user: Option<String>,
     pub selected: usize,
     pub status: AppStatus,
@@ -28,7 +28,7 @@ impl App {
         Self {
             client,
             dashboard: Dashboard::default(),
-            collapsed_repos: BTreeSet::new(),
+            collapsed_groups: BTreeSet::new(),
             current_user: None,
             selected: 0,
             status: AppStatus::Ready,
@@ -52,9 +52,10 @@ impl App {
             Ok((user, my_prs, reviews)) => {
                 self.current_user = Some(user);
                 self.dashboard = Dashboard::from_prs(my_prs, reviews);
-                self.collapsed_repos = self
-                    .collapsed_repos
-                    .intersection(&repo_names(&self.dashboard))
+                let valid_groups = group_names(&self.dashboard);
+                self.collapsed_groups = self
+                    .collapsed_groups
+                    .intersection(&valid_groups)
                     .cloned()
                     .collect();
                 self.status = AppStatus::Ready;
@@ -102,12 +103,18 @@ impl App {
 
         let mut rows = Vec::new();
         rows.push(Row::Section("My PRs"));
-        push_groups(&mut rows, &self.dashboard.my_prs, &self.collapsed_repos);
+        push_groups(
+            &mut rows,
+            DashboardSection::MyPrs,
+            &self.dashboard.my_prs,
+            &self.collapsed_groups,
+        );
         rows.push(Row::Section("Awaiting Review"));
         push_groups(
             &mut rows,
+            DashboardSection::AwaitingReview,
             &self.dashboard.awaiting_review,
-            &self.collapsed_repos,
+            &self.collapsed_groups,
         );
 
         if self.dashboard.is_empty() {
@@ -136,16 +143,12 @@ impl App {
 
     pub fn toggle_selected_group(&mut self) {
         let rows = self.rows();
-        let Some(repo) = rows
-            .get(self.selected)
-            .and_then(Row::repo_name)
-            .map(str::to_owned)
-        else {
+        let Some(repo) = rows.get(self.selected).and_then(Row::group_key) else {
             return;
         };
 
-        if !self.collapsed_repos.insert(repo.clone()) {
-            self.collapsed_repos.remove(&repo);
+        if !self.collapsed_groups.insert(repo.clone()) {
+            self.collapsed_groups.remove(&repo);
         }
     }
 
@@ -457,10 +460,17 @@ pub enum DiscussionStatus {
     Error(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DashboardSection {
+    MyPrs,
+    AwaitingReview,
+}
+
 #[derive(Clone, Debug)]
 pub enum Row<'a> {
     Section(&'static str),
     Group {
+        section: DashboardSection,
         repo: &'a str,
         count: usize,
         open: bool,
@@ -470,9 +480,9 @@ pub enum Row<'a> {
 }
 
 impl Row<'_> {
-    fn repo_name(&self) -> Option<&str> {
+    fn group_key(&self) -> Option<String> {
         match self {
-            Row::Group { repo, .. } => Some(repo),
+            Row::Group { section, repo, .. } => Some(group_key(*section, repo)),
             _ => None,
         }
     }
@@ -492,15 +502,21 @@ impl Row<'_> {
     }
 }
 
-fn push_groups<'a>(rows: &mut Vec<Row<'a>>, groups: &'a [RepoGroup], collapsed: &BTreeSet<String>) {
+fn push_groups<'a>(
+    rows: &mut Vec<Row<'a>>,
+    section: DashboardSection,
+    groups: &'a [RepoGroup],
+    collapsed: &BTreeSet<String>,
+) {
     if groups.is_empty() {
         rows.push(Row::Message("  none".to_owned()));
         return;
     }
 
     for group in groups {
-        let open = !collapsed.contains(&group.repo);
+        let open = !collapsed.contains(&group_key(section, &group.repo));
         rows.push(Row::Group {
+            section,
             repo: &group.repo,
             count: group.prs.len(),
             open,
@@ -512,11 +528,33 @@ fn push_groups<'a>(rows: &mut Vec<Row<'a>>, groups: &'a [RepoGroup], collapsed: 
     }
 }
 
+fn group_names(dashboard: &Dashboard) -> BTreeSet<String> {
+    dashboard
+        .my_prs
+        .iter()
+        .map(|group| group_key(DashboardSection::MyPrs, &group.repo))
+        .chain(
+            dashboard
+                .awaiting_review
+                .iter()
+                .map(|group| group_key(DashboardSection::AwaitingReview, &group.repo)),
+        )
+        .collect()
+}
+
+fn group_key(section: DashboardSection, repo: &str) -> String {
+    let prefix = match section {
+        DashboardSection::MyPrs => "my",
+        DashboardSection::AwaitingReview => "review",
+    };
+    format!("{prefix}:{repo}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::github::GhStatus;
-    use crate::model::{DiscussionItem, DiscussionKind};
+    use crate::model::{DiscussionItem, DiscussionKind, Reviewer, ReviewerState};
     use anyhow::{Result, anyhow};
     use std::sync::{
         Arc,
@@ -630,6 +668,36 @@ mod tests {
         app.refresh();
 
         assert!(matches!(app.status, AppStatus::Unauthenticated(_)));
+    }
+
+    #[test]
+    fn same_repo_groups_collapse_independently_across_sections() {
+        let mut source = TestSource::ok();
+        source.my_prs = Ok(vec![pr("owner/shared", 1)]);
+        source.review_prs = Ok(vec![pr("owner/shared", 2)]);
+        let mut app = App::new(Box::new(source));
+        app.refresh();
+
+        app.next();
+        app.toggle_selected_group();
+
+        let rows = app.rows();
+        assert!(matches!(
+            rows.get(1),
+            Some(Row::Group {
+                repo: "owner/shared",
+                open: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            rows.get(3),
+            Some(Row::Group {
+                repo: "owner/shared",
+                open: true,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -755,7 +823,11 @@ mod tests {
             is_draft: false,
             review_decision: Some("APPROVED".to_owned()),
             check_status: Some("passing".to_owned()),
-            reviewers: vec!["reviewer".to_owned()],
+            reviewers: vec![Reviewer {
+                login: "reviewer".to_owned(),
+                state: ReviewerState::Approved,
+            }],
+            review_requested: vec!["reviewer".to_owned()],
         }
     }
 

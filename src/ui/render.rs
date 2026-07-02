@@ -1,6 +1,6 @@
 use crate::app::{App, AppView, DetailPane, DetailStatus, DiscussionStatus, Row};
 use crate::github::PullRequestSource;
-use crate::model::{CodeLineKind, DiscussionItem, DiscussionKind, PullRequest};
+use crate::model::{CodeLineKind, DiscussionItem, DiscussionKind, PullRequest, ReviewerState};
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -119,7 +119,9 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 }
                 lines.extend(section_lines(title, section_count(&rows, index), width));
             }
-            Row::Group { repo, count, open } => {
+            Row::Group {
+                repo, count, open, ..
+            } => {
                 lines.push(group_line(index == app.selected, repo, *count, *open));
             }
             Row::Pr(pr) => {
@@ -602,13 +604,25 @@ fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'static> {
 }
 
 fn reviewers_line(pr: &PullRequest) -> Line<'static> {
-    let reviewers = if pr.reviewers.is_empty() {
-        Span::styled("no reviewers", theme::muted())
-    } else {
-        Span::styled(format!("@{}", pr.reviewers.join("  @")), theme::reviewer())
-    };
+    if pr.reviewers.is_empty() {
+        return Line::from(vec![
+            Span::raw("        "),
+            Span::styled("no reviewers", theme::muted()),
+        ]);
+    }
 
-    Line::from(vec![Span::raw("        "), reviewers])
+    let mut spans = vec![Span::raw("        ")];
+    for (index, reviewer) in pr.reviewers.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            format!("@{}", reviewer.login),
+            reviewer_style(reviewer.state),
+        ));
+    }
+
+    Line::from(spans)
 }
 
 fn message_line(selected: bool, message: &str) -> Line<'static> {
@@ -646,6 +660,15 @@ fn pr_status(pr: &PullRequest) -> String {
         Some("REVIEW_REQUIRED") => "needs review".to_owned(),
         Some("") | None => "needs review".to_owned(),
         Some(value) => value.to_ascii_lowercase().replace('_', " "),
+    }
+}
+
+fn reviewer_style(state: ReviewerState) -> Style {
+    match state {
+        ReviewerState::Approved => theme::success(),
+        ReviewerState::ChangesRequested => theme::warning(),
+        ReviewerState::Requested => theme::info(),
+        ReviewerState::Commented => theme::muted_key(),
     }
 }
 
@@ -793,6 +816,31 @@ mod tests {
     }
 
     #[test]
+    fn reviewer_line_colors_reviewers_by_state() {
+        let mut pr = pr();
+        pr.reviewers = vec![
+            crate::model::Reviewer {
+                login: "alice".to_owned(),
+                state: ReviewerState::Approved,
+            },
+            crate::model::Reviewer {
+                login: "bob".to_owned(),
+                state: ReviewerState::ChangesRequested,
+            },
+            crate::model::Reviewer {
+                login: "carol".to_owned(),
+                state: ReviewerState::Requested,
+            },
+        ];
+
+        let line = reviewers_line(&pr).to_string();
+
+        assert!(line.contains("@alice"));
+        assert!(line.contains("@bob"));
+        assert!(line.contains("@carol"));
+    }
+
+    #[test]
     fn formats_ci_and_age_labels() {
         assert_eq!(ci_text(Some("passing")), "ci✓");
         assert_eq!(ci_text(Some("failing")), "ci×");
@@ -822,6 +870,7 @@ mod tests {
         let rows = vec![
             Row::Section("My PRs"),
             Row::Group {
+                section: crate::app::DashboardSection::MyPrs,
                 repo: "owner/a",
                 count: 2,
                 open: true,
@@ -829,6 +878,7 @@ mod tests {
             Row::Pr(&pr),
             Row::Section("Awaiting Review"),
             Row::Group {
+                section: crate::app::DashboardSection::AwaitingReview,
                 repo: "owner/b",
                 count: 3,
                 open: true,
@@ -917,6 +967,7 @@ mod tests {
             review_decision: None,
             check_status: None,
             reviewers: Vec::new(),
+            review_requested: Vec::new(),
         }
     }
 }

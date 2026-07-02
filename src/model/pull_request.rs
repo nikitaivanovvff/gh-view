@@ -12,7 +12,22 @@ pub struct PullRequest {
     pub is_draft: bool,
     pub review_decision: Option<String>,
     pub check_status: Option<String>,
-    pub reviewers: Vec<String>,
+    pub reviewers: Vec<Reviewer>,
+    pub review_requested: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reviewer {
+    pub login: String,
+    pub state: ReviewerState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReviewerState {
+    Requested,
+    Approved,
+    ChangesRequested,
+    Commented,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -1,7 +1,7 @@
 use super::{GhStatus, PullRequestSource};
 use crate::model::{
     CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind, DiscussionReply,
-    PrReview, PullRequest, PullRequestDetail,
+    PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
 };
 use anyhow::Result;
 
@@ -186,6 +186,14 @@ fn code_line(number: u64, kind: CodeLineKind, text: &str) -> CodeContextLine {
     }
 }
 
+fn reviewer_state(review_decision: Option<&str>, login: &str) -> ReviewerState {
+    match review_decision {
+        Some("APPROVED") => ReviewerState::Approved,
+        Some("CHANGES_REQUESTED") if login == "nikita" => ReviewerState::ChangesRequested,
+        _ => ReviewerState::Requested,
+    }
+}
+
 fn mock_pr(input: MockPr<'_>) -> PullRequest {
     PullRequest {
         repo: input.repo.to_owned(),
@@ -198,6 +206,15 @@ fn mock_pr(input: MockPr<'_>) -> PullRequest {
         is_draft: input.is_draft,
         review_decision: input.review_decision.map(str::to_owned),
         check_status: input.check_status.map(str::to_owned),
-        reviewers: input.reviewers.into_iter().map(str::to_owned).collect(),
+        reviewers: input
+            .reviewers
+            .iter()
+            .copied()
+            .map(|login| Reviewer {
+                login: login.to_owned(),
+                state: reviewer_state(input.review_decision, login),
+            })
+            .collect(),
+        review_requested: input.reviewers.into_iter().map(str::to_owned).collect(),
     }
 }

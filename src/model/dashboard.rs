@@ -1,5 +1,7 @@
 use super::PullRequest;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Dashboard {
@@ -46,6 +48,7 @@ fn group_by_repo(prs: Vec<PullRequest>) -> Vec<RepoGroup> {
         .collect()
 }
 
+#[cfg(test)]
 pub fn repo_names(dashboard: &Dashboard) -> BTreeSet<String> {
     dashboard
         .my_prs
@@ -116,6 +119,7 @@ mod tests {
             review_decision: None,
             check_status: None,
             reviewers: Vec::new(),
+            review_requested: Vec::new(),
         }
     }
 }
