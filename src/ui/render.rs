@@ -119,7 +119,9 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 }
                 lines.extend(section_lines(title, section_count(&rows, index), width));
             }
-            Row::Group { repo, count, open } => {
+            Row::Group {
+                repo, count, open, ..
+            } => {
                 lines.push(group_line(index == app.selected, repo, *count, *open));
             }
             Row::Pr(pr) => {
@@ -822,6 +824,7 @@ mod tests {
         let rows = vec![
             Row::Section("My PRs"),
             Row::Group {
+                section: crate::app::DashboardSection::MyPrs,
                 repo: "owner/a",
                 count: 2,
                 open: true,
@@ -829,6 +832,7 @@ mod tests {
             Row::Pr(&pr),
             Row::Section("Awaiting Review"),
             Row::Group {
+                section: crate::app::DashboardSection::AwaitingReview,
                 repo: "owner/b",
                 count: 3,
                 open: true,
@@ -917,6 +921,7 @@ mod tests {
             review_decision: None,
             check_status: None,
             reviewers: Vec::new(),
+            review_requested: Vec::new(),
         }
     }
 }

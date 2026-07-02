@@ -13,6 +13,7 @@ pub struct PullRequest {
     pub review_decision: Option<String>,
     pub check_status: Option<String>,
     pub reviewers: Vec<String>,
+    pub review_requested: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

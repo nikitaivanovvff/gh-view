@@ -198,6 +198,7 @@ fn mock_pr(input: MockPr<'_>) -> PullRequest {
         is_draft: input.is_draft,
         review_decision: input.review_decision.map(str::to_owned),
         check_status: input.check_status.map(str::to_owned),
-        reviewers: input.reviewers.into_iter().map(str::to_owned).collect(),
+        reviewers: input.reviewers.iter().copied().map(str::to_owned).collect(),
+        review_requested: input.reviewers.into_iter().map(str::to_owned).collect(),
     }
 }
