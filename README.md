@@ -110,7 +110,7 @@ Use mock mode to try the UI without a GitHub account or network calls:
 gh-view --mock
 ```
 
-The mock data includes several repositories, PR review states, CI states, review-thread comments, replies, and code context. This is also the recommended mode for screenshots and UI tuning.
+The mock data includes several repositories, PR review states, CI states, review-thread comments, replies, and code context.
 
 ## Development
 
