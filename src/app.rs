@@ -554,7 +554,7 @@ fn group_key(section: DashboardSection, repo: &str) -> String {
 mod tests {
     use super::*;
     use crate::github::GhStatus;
-    use crate::model::{DiscussionItem, DiscussionKind};
+    use crate::model::{DiscussionItem, DiscussionKind, Reviewer, ReviewerState};
     use anyhow::{Result, anyhow};
     use std::sync::{
         Arc,
@@ -823,7 +823,10 @@ mod tests {
             is_draft: false,
             review_decision: Some("APPROVED".to_owned()),
             check_status: Some("passing".to_owned()),
-            reviewers: vec!["reviewer".to_owned()],
+            reviewers: vec![Reviewer {
+                login: "reviewer".to_owned(),
+                state: ReviewerState::Approved,
+            }],
             review_requested: vec!["reviewer".to_owned()],
         }
     }

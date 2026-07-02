@@ -1,7 +1,7 @@
 use super::{GhStatus, PullRequestSource};
 use crate::model::{
     CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind, DiscussionReply,
-    PrReview, PullRequest, PullRequestDetail,
+    PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -105,8 +105,8 @@ impl GhClient {
 
         let summary: DashboardPullRequestSummary = serde_json::from_slice(&output.stdout)
             .context("failed to parse gh pr view dashboard summary JSON output")?;
-        pr.reviewers = summary.reviewers();
         pr.review_requested = summary.requested_reviewers();
+        pr.reviewers = summary.reviewers();
         pr.review_decision = summary.review_decision.filter(|value| !value.is_empty());
         pr.check_status = summarize_checks(summary.status_check_rollup.as_deref().unwrap_or(&[]));
         Ok(pr)
@@ -438,16 +438,31 @@ impl DashboardPullRequestSummary {
         reviewers
     }
 
-    fn reviewers(&self) -> Vec<String> {
-        let mut reviewers = self.requested_reviewers();
-        reviewers.extend(
-            self.latest_reviews
-                .iter()
-                .filter(|review| !review.author_login().is_empty())
-                .map(GhReview::author_login),
-        );
-        reviewers.sort();
-        reviewers.dedup();
+    fn reviewers(&self) -> Vec<Reviewer> {
+        let mut reviewers: Vec<Reviewer> = self
+            .requested_reviewers()
+            .into_iter()
+            .map(|login| Reviewer {
+                login,
+                state: ReviewerState::Requested,
+            })
+            .collect();
+
+        for review in &self.latest_reviews {
+            let login = review.author_login();
+            if login.is_empty() {
+                continue;
+            }
+            upsert_reviewer(
+                &mut reviewers,
+                Reviewer {
+                    login,
+                    state: reviewer_state(&review.state),
+                },
+            );
+        }
+
+        reviewers.sort_by(|left, right| left.login.cmp(&right.login));
         reviewers
     }
 }
@@ -563,6 +578,25 @@ impl DetailPullRequest {
                 })
                 .collect(),
         }
+    }
+}
+
+fn upsert_reviewer(reviewers: &mut Vec<Reviewer>, reviewer: Reviewer) {
+    if let Some(existing) = reviewers
+        .iter_mut()
+        .find(|existing| existing.login == reviewer.login)
+    {
+        existing.state = reviewer.state;
+    } else {
+        reviewers.push(reviewer);
+    }
+}
+
+fn reviewer_state(state: &str) -> ReviewerState {
+    match state {
+        "APPROVED" => ReviewerState::Approved,
+        "CHANGES_REQUESTED" => ReviewerState::ChangesRequested,
+        _ => ReviewerState::Commented,
     }
 }
 
@@ -791,7 +825,16 @@ mod tests {
         assert_eq!(summary.requested_reviewers(), vec!["alice".to_owned()]);
         assert_eq!(
             summary.reviewers(),
-            vec!["alice".to_owned(), "bob".to_owned()]
+            vec![
+                Reviewer {
+                    login: "alice".to_owned(),
+                    state: ReviewerState::Requested,
+                },
+                Reviewer {
+                    login: "bob".to_owned(),
+                    state: ReviewerState::Approved,
+                }
+            ]
         );
     }
 

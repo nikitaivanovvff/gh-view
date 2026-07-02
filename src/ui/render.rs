@@ -1,6 +1,6 @@
 use crate::app::{App, AppView, DetailPane, DetailStatus, DiscussionStatus, Row};
 use crate::github::PullRequestSource;
-use crate::model::{CodeLineKind, DiscussionItem, DiscussionKind, PullRequest};
+use crate::model::{CodeLineKind, DiscussionItem, DiscussionKind, PullRequest, ReviewerState};
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -604,13 +604,25 @@ fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'static> {
 }
 
 fn reviewers_line(pr: &PullRequest) -> Line<'static> {
-    let reviewers = if pr.reviewers.is_empty() {
-        Span::styled("no reviewers", theme::muted())
-    } else {
-        Span::styled(format!("@{}", pr.reviewers.join("  @")), theme::reviewer())
-    };
+    if pr.reviewers.is_empty() {
+        return Line::from(vec![
+            Span::raw("        "),
+            Span::styled("no reviewers", theme::muted()),
+        ]);
+    }
 
-    Line::from(vec![Span::raw("        "), reviewers])
+    let mut spans = vec![Span::raw("        ")];
+    for (index, reviewer) in pr.reviewers.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            format!("@{}", reviewer.login),
+            reviewer_style(reviewer.state),
+        ));
+    }
+
+    Line::from(spans)
 }
 
 fn message_line(selected: bool, message: &str) -> Line<'static> {
@@ -648,6 +660,15 @@ fn pr_status(pr: &PullRequest) -> String {
         Some("REVIEW_REQUIRED") => "needs review".to_owned(),
         Some("") | None => "needs review".to_owned(),
         Some(value) => value.to_ascii_lowercase().replace('_', " "),
+    }
+}
+
+fn reviewer_style(state: ReviewerState) -> Style {
+    match state {
+        ReviewerState::Approved => theme::success(),
+        ReviewerState::ChangesRequested => theme::warning(),
+        ReviewerState::Requested => theme::info(),
+        ReviewerState::Commented => theme::muted_key(),
     }
 }
 
@@ -792,6 +813,31 @@ mod tests {
 
         pr.is_draft = true;
         assert_eq!(pr_status(&pr), "draft");
+    }
+
+    #[test]
+    fn reviewer_line_colors_reviewers_by_state() {
+        let mut pr = pr();
+        pr.reviewers = vec![
+            crate::model::Reviewer {
+                login: "alice".to_owned(),
+                state: ReviewerState::Approved,
+            },
+            crate::model::Reviewer {
+                login: "bob".to_owned(),
+                state: ReviewerState::ChangesRequested,
+            },
+            crate::model::Reviewer {
+                login: "carol".to_owned(),
+                state: ReviewerState::Requested,
+            },
+        ];
+
+        let line = reviewers_line(&pr).to_string();
+
+        assert!(line.contains("@alice"));
+        assert!(line.contains("@bob"));
+        assert!(line.contains("@carol"));
     }
 
     #[test]
