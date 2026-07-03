@@ -11,7 +11,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub fn run(client: Box<dyn PullRequestSource>) -> Result<()> {
     let mut app = App::new(client);
@@ -37,9 +37,17 @@ fn restore_terminal() -> Result<()> {
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     let mut needs_draw = true;
+    let loading_tick = Duration::from_millis(200);
+    let mut last_loading_tick = Instant::now();
 
     loop {
         if app.poll_background() {
+            needs_draw = true;
+        }
+
+        if app.is_loading() && last_loading_tick.elapsed() >= loading_tick {
+            app.advance_loading_frame();
+            last_loading_tick = Instant::now();
             needs_draw = true;
         }
 

@@ -1,6 +1,6 @@
 use super::text::{
-    age_label, ci_style, ci_text, merge_style, pr_status, rule_line, state_style, status_style,
-    truncate,
+    age_label, ci_style, ci_text, loading_dots, merge_style, pr_status, rule_line, state_style,
+    status_style, truncate,
 };
 use super::theme;
 use crate::app::{App, DetailPane, DetailStatus, DiscussionStatus};
@@ -46,42 +46,13 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         pr.title.clone(),
         theme::normal().add_modifier(Modifier::BOLD),
     )]));
-    let review_status = pr_status(pr);
-    summary.push(Line::from(vec![
-        Span::styled(format!("@{}", pr.author), theme::reviewer()),
-        Span::styled("  review: ", theme::muted()),
-        Span::styled(review_status.clone(), status_style(&review_status)),
-        Span::styled("  branch: ", theme::muted()),
-        Span::styled(detail.head_ref.clone(), theme::normal()),
-        Span::styled(" → ", theme::muted()),
-        Span::styled(detail.base_ref.clone(), theme::normal()),
-        Span::styled("  state: ", theme::muted()),
-        Span::styled(
-            detail.state.to_ascii_lowercase(),
-            state_style(&detail.state),
-        ),
-        Span::styled("  merge: ", theme::muted()),
-        Span::styled(
-            detail
-                .mergeable
-                .as_deref()
-                .unwrap_or("unknown")
-                .to_ascii_lowercase(),
-            merge_style(detail.mergeable.as_deref()),
-        ),
-        Span::styled(
-            format!("  {}", ci_text(pr.check_status.as_deref())),
-            ci_style(pr.check_status.as_deref()),
-        ),
-    ]));
-    if let Some(line) = loading_status_line(app) {
+    summary.push(metadata_line(app, detail));
+    if let Some(line) = status_line(app) {
         summary.push(line);
     }
     summary.push(rule_line(width));
 
-    if app.detail_status == DetailStatus::Loading {
-        summary.push(Line::styled("loading PR page…", theme::muted()));
-    } else {
+    if app.detail_status != DetailStatus::Loading {
         summary.push(Line::styled(
             "DESCRIPTION",
             theme::muted().add_modifier(Modifier::BOLD),
@@ -155,11 +126,18 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
     let index = app.selected_discussion_index();
     let total = detail.discussion.len();
     let Some(item) = detail.discussion.get(index) else {
+        let discussion_loading = app.discussion_status == DiscussionStatus::Loading;
         let message = match &app.discussion_status {
             DiscussionStatus::Error(error) => {
                 format!("  could not load discussion threads: {error}")
             }
+            DiscussionStatus::Loading => String::new(),
             _ => "  none".to_owned(),
+        };
+        let code_context_message = if discussion_loading {
+            String::new()
+        } else {
+            "  no discussion selected".to_owned()
         };
         let empty = vec![
             rule_line(panes[0].width as usize),
@@ -173,7 +151,7 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
                 rule_line(panes[2].width as usize),
                 Line::styled("CODE CONTEXT", theme::muted().add_modifier(Modifier::BOLD)),
                 rule_line(panes[2].width as usize),
-                Line::styled("  waiting for discussion", theme::muted()),
+                Line::styled(code_context_message, theme::muted()),
             ])
             .style(theme::normal()),
             panes[2],
@@ -216,10 +194,55 @@ fn max_scroll(line_count: usize, height: u16) -> u16 {
         .min(u16::MAX as usize) as u16
 }
 
-fn loading_status_line(app: &App) -> Option<Line<'static>> {
-    let detail_loading = app.detail_status == DetailStatus::Loading;
-    let discussion_loading = app.discussion_status == DiscussionStatus::Loading;
+fn metadata_line(app: &App, detail: &crate::model::PullRequestDetail) -> Line<'static> {
+    let pr = &detail.pr;
+    let review_status = pr_status(pr);
+    let mut spans = vec![Span::styled(format!("@{}", pr.author), theme::reviewer())];
 
+    if app.detail_is_loading() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            loading_dots(app.loading_frame),
+            theme::accent(),
+        ));
+    }
+
+    spans.extend([
+        Span::styled("  review: ", theme::muted()),
+        Span::styled(review_status.clone(), status_style(&review_status)),
+        Span::styled(
+            format!("  {}", ci_text(pr.check_status.as_deref())),
+            ci_style(pr.check_status.as_deref()),
+        ),
+    ]);
+
+    if app.detail_status == DetailStatus::Ready {
+        spans.extend([
+            Span::styled("  branch: ", theme::muted()),
+            Span::styled(detail.head_ref.clone(), theme::normal()),
+            Span::styled(" -> ", theme::muted()),
+            Span::styled(detail.base_ref.clone(), theme::normal()),
+            Span::styled("  state: ", theme::muted()),
+            Span::styled(
+                detail.state.to_ascii_lowercase(),
+                state_style(&detail.state),
+            ),
+            Span::styled("  merge: ", theme::muted()),
+            Span::styled(
+                detail
+                    .mergeable
+                    .as_deref()
+                    .unwrap_or("unknown")
+                    .to_ascii_lowercase(),
+                merge_style(detail.mergeable.as_deref()),
+            ),
+        ]);
+    }
+
+    Line::from(spans)
+}
+
+fn status_line(app: &App) -> Option<Line<'static>> {
     match (&app.detail_status, &app.discussion_status) {
         (DetailStatus::Error(error), _) => Some(Line::styled(
             format!("could not load PR details: {error}"),
@@ -229,14 +252,6 @@ fn loading_status_line(app: &App) -> Option<Line<'static>> {
             format!("could not load discussion threads: {error}"),
             theme::danger(),
         )),
-        _ if detail_loading && discussion_loading => Some(Line::styled(
-            "loading PR details and discussion…",
-            theme::muted(),
-        )),
-        _ if detail_loading => Some(Line::styled("loading PR details…", theme::muted())),
-        _ if discussion_loading => {
-            Some(Line::styled("loading discussion threads…", theme::muted()))
-        }
         _ => None,
     }
 }
@@ -260,10 +275,8 @@ fn discussion_lines(
         DiscussionKind::ReviewThread { resolved } if *resolved => "thread · resolved".to_owned(),
         DiscussionKind::ReviewThread { .. } => "thread · unresolved".to_owned(),
     };
-    match discussion_status {
-        DiscussionStatus::Loading => label.push_str(" · loading threads…"),
-        DiscussionStatus::Error(_) => label.push_str(" · thread load failed"),
-        _ => {}
+    if matches!(discussion_status, DiscussionStatus::Error(_)) {
+        label.push_str(" · thread load failed");
     }
 
     lines.push(rule_line(width));
@@ -443,26 +456,16 @@ mod tests {
     }
 
     #[test]
-    fn loading_status_line_reports_loading_and_error_states() {
+    fn status_line_reports_errors_without_loading_messages() {
         let mut app = App::new(Box::new(EmptySource));
-        assert!(loading_status_line(&app).is_none());
+        assert!(status_line(&app).is_none());
 
         app.detail_status = DetailStatus::Loading;
         app.discussion_status = DiscussionStatus::Loading;
-        assert!(
-            loading_status_line(&app)
-                .unwrap()
-                .to_string()
-                .contains("loading PR details and discussion")
-        );
+        assert!(status_line(&app).is_none());
 
         app.detail_status = DetailStatus::Error("boom".to_owned());
-        assert!(
-            loading_status_line(&app)
-                .unwrap()
-                .to_string()
-                .contains("boom")
-        );
+        assert!(status_line(&app).unwrap().to_string().contains("boom"));
     }
 
     #[test]
@@ -493,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn discussion_lines_include_replies_and_loading_state() {
+    fn discussion_lines_include_replies_without_loading_state() {
         let item = DiscussionItem {
             kind: DiscussionKind::ReviewThread { resolved: false },
             author: "alice".to_owned(),
@@ -515,7 +518,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(text.contains("thread · unresolved · loading threads…"));
+        assert!(text.contains("thread · unresolved"));
+        assert!(!text.contains("loading"));
         assert!(text.contains("@alice"));
         assert!(text.contains("@bob"));
     }

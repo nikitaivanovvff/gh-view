@@ -27,6 +27,7 @@ pub struct App {
     pub detail_status: DetailStatus,
     pub discussion_status: DiscussionStatus,
     pub dashboard_loading: bool,
+    pub loading_frame: usize,
     dashboard_rx: Option<DashboardReceiver>,
     detail_rx: Option<Receiver<Result<PullRequestDetail, String>>>,
     discussion_rx: Option<Receiver<Result<Vec<crate::model::DiscussionItem>, String>>>,
@@ -50,6 +51,7 @@ impl App {
             detail_status: DetailStatus::Idle,
             discussion_status: DiscussionStatus::Idle,
             dashboard_loading: false,
+            loading_frame: 0,
             dashboard_rx: None,
             detail_rx: None,
             discussion_rx: None,
@@ -72,6 +74,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         self.dashboard_rx = Some(rx);
         self.dashboard_loading = true;
+        self.loading_frame = 0;
 
         thread::spawn(move || {
             let result = refresh_dashboard(client, current_user).map_err(|error| error.to_string());
@@ -127,11 +130,9 @@ impl App {
         );
 
         if self.dashboard.is_empty() {
-            rows.push(Row::Message(if self.dashboard_loading {
-                "Loading pull requests…".to_owned()
-            } else {
-                "No open PRs found. Press r to refresh.".to_owned()
-            }));
+            rows.push(Row::Message(
+                "No open PRs found. Press r to refresh.".to_owned(),
+            ));
         }
 
         rows
@@ -296,6 +297,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         self.detail_rx = Some(rx);
         self.detail_status = DetailStatus::Loading;
+        self.loading_frame = 0;
 
         thread::spawn(move || {
             let result = client
@@ -310,6 +312,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         self.discussion_rx = Some(rx);
         self.discussion_status = DiscussionStatus::Loading;
+        self.loading_frame = 0;
 
         thread::spawn(move || {
             let result = client
@@ -415,6 +418,25 @@ impl App {
             self.status = AppStatus::Error(format!("failed to open browser: {error}"));
         }
     }
+
+    pub fn show_dashboard_loading_screen(&self) -> bool {
+        self.dashboard_loading && self.dashboard.is_empty()
+    }
+
+    pub fn detail_is_loading(&self) -> bool {
+        self.detail_status == DetailStatus::Loading
+            || self.discussion_status == DiscussionStatus::Loading
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.dashboard_loading || self.detail_is_loading()
+    }
+
+    pub fn advance_loading_frame(&mut self) {
+        if self.is_loading() {
+            self.loading_frame = self.loading_frame.wrapping_add(1);
+        }
+    }
 }
 
 fn refresh_dashboard(
@@ -450,7 +472,7 @@ fn classify_refresh_error(message: String) -> AppStatus {
 
 fn placeholder_detail(pr: PullRequest) -> PullRequestDetail {
     let state = if pr.state.is_empty() {
-        "loading".to_owned()
+        "unknown".to_owned()
     } else {
         pr.state.clone()
     };
@@ -460,8 +482,8 @@ fn placeholder_detail(pr: PullRequest) -> PullRequestDetail {
         body: String::new(),
         state,
         mergeable: None,
-        head_ref: "loading".to_owned(),
-        base_ref: "loading".to_owned(),
+        head_ref: String::new(),
+        base_ref: String::new(),
         reviews: Vec::new(),
         discussion: Vec::new(),
     }
@@ -621,6 +643,38 @@ mod tests {
         app.refresh();
 
         assert!(matches!(app.status, AppStatus::Unauthenticated(_)));
+    }
+
+    #[test]
+    fn dashboard_loading_screen_is_for_empty_dashboard_loads() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+
+        app.dashboard_loading = true;
+        assert!(app.show_dashboard_loading_screen());
+        assert!(matches!(
+            app.rows().last(),
+            Some(Row::Message(message)) if !message.contains("Loading")
+        ));
+
+        app.current_user = Some("octocat".to_owned());
+        assert!(app.show_dashboard_loading_screen());
+
+        app.dashboard_loading = false;
+        app.refresh();
+        app.dashboard_loading = true;
+        assert!(!app.show_dashboard_loading_screen());
+    }
+
+    #[test]
+    fn loading_frame_advances_only_while_loading() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+
+        app.advance_loading_frame();
+        assert_eq!(app.loading_frame, 0);
+
+        app.dashboard_loading = true;
+        app.advance_loading_frame();
+        assert_eq!(app.loading_frame, 1);
     }
 
     #[test]

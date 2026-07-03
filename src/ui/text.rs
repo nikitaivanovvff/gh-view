@@ -7,6 +7,11 @@ pub(super) fn rule_line(width: usize) -> Line<'static> {
     Line::from(Span::styled("━".repeat(width.max(1)), theme::rule()))
 }
 
+pub(super) fn loading_dots(frame: usize) -> &'static str {
+    const DOTS: [&str; 4] = [".  ", ".. ", "...", " .."];
+    DOTS[frame % DOTS.len()]
+}
+
 pub(super) fn pr_status(pr: &PullRequest) -> String {
     if pr.is_draft {
         return "draft".to_owned();
@@ -145,6 +150,13 @@ mod tests {
         assert_eq!(truncate("hello", 10), "hello");
         assert_eq!(truncate("hello", 4), "hel…");
         assert_eq!(truncate("hello", 1), "…");
+    }
+
+    #[test]
+    fn loading_dots_cycles_ascii_frames() {
+        assert_eq!(loading_dots(0), ".  ");
+        assert_eq!(loading_dots(1), ".. ");
+        assert_eq!(loading_dots(4), ".  ");
     }
 
     fn pr() -> PullRequest {

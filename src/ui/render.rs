@@ -2,9 +2,10 @@ use super::dashboard::{
     group_line, message_line, pr_line, reviewers_line, section_count, section_lines,
 };
 use super::detail::render_detail;
-use super::text::rule_line;
+use super::text::{loading_dots, rule_line};
 use super::theme;
 use crate::app::{App, AppView, Row};
+use ratatui::layout::Alignment;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
@@ -13,6 +14,11 @@ use ratatui::widgets::Paragraph;
 pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     if app.view == AppView::Detail {
         render_detail(frame, app);
+        return;
+    }
+
+    if app.show_dashboard_loading_screen() {
+        render_dashboard_loading(frame, app.loading_frame);
         return;
     }
 
@@ -28,21 +34,17 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let width = chunks[0].width as usize;
     let mut lines = Vec::new();
 
-    let mut header = vec![
+    let header = vec![
         Span::styled("GH-VIEW", theme::accent().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(
             app.current_user
                 .as_deref()
                 .map(|user| format!("@{user}"))
-                .unwrap_or_else(|| "@loading".to_owned()),
+                .unwrap_or_else(|| "@unknown".to_owned()),
             theme::muted(),
         ),
     ];
-    if app.dashboard_loading {
-        header.push(Span::raw("  "));
-        header.push(Span::styled("loading…", theme::muted()));
-    }
     lines.push(Line::from(header));
     lines.push(rule_line(width));
     for (index, row) in rows.iter().enumerate() {
@@ -88,4 +90,27 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         ]),
     ];
     frame.render_widget(Paragraph::new(footer), chunks[1]);
+}
+
+fn render_dashboard_loading(frame: &mut ratatui::Frame<'_>, loading_frame: usize) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(45),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    let line = Line::from(vec![
+        Span::styled("Loading PRs", theme::muted()),
+        Span::styled(loading_dots(loading_frame), theme::accent()),
+    ]);
+    frame.render_widget(
+        Paragraph::new(line)
+            .style(theme::normal())
+            .alignment(Alignment::Center),
+        chunks[1],
+    );
 }
