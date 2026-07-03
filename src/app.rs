@@ -180,31 +180,34 @@ impl App {
         self.start_discussion_load(pr);
     }
 
-    pub fn poll_background(&mut self) {
-        self.poll_dashboard_load();
-        self.poll_detail_load();
-        self.poll_discussion_load();
+    pub fn poll_background(&mut self) -> bool {
+        let mut changed = false;
+        changed |= self.poll_dashboard_load();
+        changed |= self.poll_detail_load();
+        changed |= self.poll_discussion_load();
+        changed
     }
 
-    fn poll_dashboard_load(&mut self) {
+    fn poll_dashboard_load(&mut self) -> bool {
         let Some(rx) = &self.dashboard_rx else {
-            return;
+            return false;
         };
 
         let Ok(result) = rx.try_recv() else {
-            return;
+            return false;
         };
 
         self.apply_refresh_result(result);
+        true
     }
 
-    fn poll_detail_load(&mut self) {
+    fn poll_detail_load(&mut self) -> bool {
         let Some(rx) = &self.detail_rx else {
-            return;
+            return false;
         };
 
         let Ok(result) = rx.try_recv() else {
-            return;
+            return false;
         };
 
         self.detail_rx = None;
@@ -252,15 +255,16 @@ impl App {
                 self.detail_status = DetailStatus::Error(error);
             }
         }
+        true
     }
 
-    fn poll_discussion_load(&mut self) {
+    fn poll_discussion_load(&mut self) -> bool {
         let Some(rx) = &self.discussion_rx else {
-            return;
+            return false;
         };
 
         let Ok(result) = rx.try_recv() else {
-            return;
+            return false;
         };
 
         self.discussion_rx = None;
@@ -280,6 +284,7 @@ impl App {
                 self.discussion_status = DiscussionStatus::Error(error);
             }
         }
+        true
     }
 
     fn start_detail_load(&mut self, pr: PullRequest) {
@@ -417,19 +422,7 @@ fn refresh_dashboard(
         None => client.current_user()?,
     };
 
-    let my_client = client.clone();
-    let review_client = client.clone();
-    let review_user = user.clone();
-    let my_user = user.clone();
-    let my_handle = thread::spawn(move || my_client.fetch_my_prs(&my_user));
-    let review_handle = thread::spawn(move || review_client.fetch_review_requests(&review_user));
-
-    let my_prs = my_handle
-        .join()
-        .map_err(|_| anyhow::anyhow!("authored PR fetch thread panicked"))??;
-    let reviews = review_handle
-        .join()
-        .map_err(|_| anyhow::anyhow!("review-request fetch thread panicked"))??;
+    let (my_prs, reviews) = client.fetch_dashboard(&user)?;
 
     Ok((user, my_prs, reviews))
 }

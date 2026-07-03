@@ -39,46 +39,118 @@ fn restore_terminal() -> Result<()> {
 }
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
+    let mut needs_draw = true;
+
     loop {
-        app.poll_background();
-        terminal.draw(|frame| render(frame, app))?;
+        if app.poll_background() {
+            needs_draw = true;
+        }
+
+        if needs_draw {
+            terminal.draw(|frame| render(frame, app))?;
+            needs_draw = false;
+        }
 
         if event::poll(Duration::from_millis(200))? {
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-
-            match app.view {
-                AppView::Dashboard => match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                    KeyCode::Down | KeyCode::Char('j') => app.next(),
-                    KeyCode::Up | KeyCode::Char('k') => app.previous(),
-                    KeyCode::Char(' ') | KeyCode::Char('o') => app.toggle_selected_group(),
-                    KeyCode::Char('r') => app.refresh_async(),
-                    KeyCode::Char('b') => app.open_selected_in_browser(),
-                    KeyCode::Enter => app.open_selected_detail(),
-                    _ => {}
-                },
-                AppView::Detail => match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => app.back_to_dashboard(),
-                    KeyCode::Down | KeyCode::Char('j') => app.scroll_active_down(),
-                    KeyCode::Up | KeyCode::Char('k') => app.scroll_active_up(),
-                    KeyCode::Tab => app.toggle_detail_pane(),
-                    KeyCode::Char('d') => app.focus_description(),
-                    KeyCode::Char('D') => app.focus_discussion(),
-                    KeyCode::Char('b') => app.open_selected_in_browser(),
-                    KeyCode::Char('n') | KeyCode::Right => app.next_discussion(),
-                    KeyCode::Char('p') | KeyCode::Left => app.previous_discussion(),
-                    KeyCode::Char('r') => app.open_selected_detail(),
-                    _ => {}
-                },
+            match handle_event(event::read()?, app)? {
+                InputOutcome::Continue(changed) => needs_draw |= changed,
+                InputOutcome::Quit => return Ok(()),
             }
         }
     }
+}
+
+enum InputOutcome {
+    Continue(bool),
+    Quit,
+}
+
+fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> {
+    let key = match event {
+        Event::Key(key) => key,
+        Event::Resize(_, _) => return Ok(InputOutcome::Continue(true)),
+        _ => return Ok(InputOutcome::Continue(false)),
+    };
+
+    if key.kind != KeyEventKind::Press {
+        return Ok(InputOutcome::Continue(false));
+    }
+
+    let changed = match app.view {
+        AppView::Dashboard => match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return Ok(InputOutcome::Quit),
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.next();
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.previous();
+                true
+            }
+            KeyCode::Char(' ') | KeyCode::Char('o') => {
+                app.toggle_selected_group();
+                true
+            }
+            KeyCode::Char('r') => {
+                app.refresh_async();
+                true
+            }
+            KeyCode::Char('b') => {
+                app.open_selected_in_browser();
+                true
+            }
+            KeyCode::Enter => {
+                app.open_selected_detail();
+                true
+            }
+            _ => false,
+        },
+        AppView::Detail => match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => {
+                app.back_to_dashboard();
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.scroll_active_down();
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.scroll_active_up();
+                true
+            }
+            KeyCode::Tab => {
+                app.toggle_detail_pane();
+                true
+            }
+            KeyCode::Char('d') => {
+                app.focus_description();
+                true
+            }
+            KeyCode::Char('D') => {
+                app.focus_discussion();
+                true
+            }
+            KeyCode::Char('b') => {
+                app.open_selected_in_browser();
+                true
+            }
+            KeyCode::Char('n') | KeyCode::Right => {
+                app.next_discussion();
+                true
+            }
+            KeyCode::Char('p') | KeyCode::Left => {
+                app.previous_discussion();
+                true
+            }
+            KeyCode::Char('r') => {
+                app.open_selected_detail();
+                true
+            }
+            _ => false,
+        },
+    };
+
+    Ok(InputOutcome::Continue(changed))
 }
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {

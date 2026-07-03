@@ -5,6 +5,7 @@ use crate::model::{
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use std::process::Command;
 
 const SEARCH_FIELDS: &str = "repository,number,title,author,updatedAt,state,isDraft,url";
@@ -80,19 +81,28 @@ impl GhClient {
 
     fn search_dashboard_graphql(&self, query: &str) -> Result<Vec<PullRequest>> {
         let graphql = dashboard_search_query(query);
+        let response: DashboardSearchResponse = self.graphql(graphql)?;
+        Ok(response.into_pull_requests())
+    }
+
+    fn dashboard_graphql(&self, login: &str) -> Result<(Vec<PullRequest>, Vec<PullRequest>)> {
+        let graphql = dashboard_query(login);
+        let response: DashboardResponse = self.graphql(graphql)?;
+        Ok(response.into_dashboard(login))
+    }
+
+    fn graphql<T: DeserializeOwned>(&self, graphql: String) -> Result<T> {
         let query_field = format!("query={graphql}");
         let output = Command::new("gh")
             .args(["api", "graphql", "-f", &query_field])
             .output()
-            .context("failed to run gh api graphql for dashboard")?;
+            .context("failed to run gh api graphql")?;
 
         if !output.status.success() {
             bail!(command_error(&output));
         }
 
-        let response: DashboardSearchResponse = serde_json::from_slice(&output.stdout)
-            .context("failed to parse gh dashboard GraphQL output")?;
-        Ok(response.into_pull_requests())
+        serde_json::from_slice(&output.stdout).context("failed to parse gh GraphQL output")
     }
 
     fn pr_view(&self, pr: &PullRequest) -> Result<PullRequestDetail> {
@@ -185,6 +195,15 @@ impl PullRequestSource for GhClient {
             .or_else(|_| self.search_prs(&["--author", login]))
     }
 
+    fn fetch_dashboard(&self, login: &str) -> Result<(Vec<PullRequest>, Vec<PullRequest>)> {
+        self.dashboard_graphql(login).or_else(|_| {
+            Ok((
+                self.search_prs(&["--author", login])?,
+                self.search_prs(&["--review-requested", login])?,
+            ))
+        })
+    }
+
     fn fetch_review_requests(&self, login: &str) -> Result<Vec<PullRequest>> {
         self.search_dashboard_graphql(&format!(
             "is:pr is:open review-requested:{login} archived:false"
@@ -228,42 +247,75 @@ fn dashboard_search_query(query: &str) -> String {
         r#"{{
   search(query: "{escaped_query}", type: ISSUE, first: 50) {{
     nodes {{
-      ... on PullRequest {{
-        repository {{ nameWithOwner }}
-        number
-        title
-        url
-        isDraft
-        reviewDecision
-        updatedAt
-        author {{ login }}
-        reviews(last: 20) {{
-          nodes {{
-            author {{ login __typename }}
-            state
-          }}
-        }}
-        reviewRequests(first: 20) {{
-          nodes {{
-            requestedReviewer {{
-              ... on User {{ login __typename }}
-              ... on Team {{ name __typename }}
-            }}
-          }}
-        }}
-        commits(last: 1) {{
-          nodes {{
-            commit {{
-              statusCheckRollup {{ state }}
-            }}
-          }}
-        }}
-      }}
+      ...DashboardPullRequestFields
     }}
   }}
-}}"#
+}}
+
+{DASHBOARD_PULL_REQUEST_FRAGMENT}"#
     )
 }
+
+fn dashboard_query(login: &str) -> String {
+    let my_query = escape_graphql_string(&format!("is:pr is:open author:{login} archived:false"));
+    let review_query = escape_graphql_string(&format!(
+        "is:pr is:open review-requested:{login} archived:false"
+    ));
+    format!(
+        r#"{{
+  myPrs: search(query: "{my_query}", type: ISSUE, first: 50) {{
+    nodes {{
+      ...DashboardPullRequestFields
+    }}
+  }}
+  reviewRequests: search(query: "{review_query}", type: ISSUE, first: 50) {{
+    nodes {{
+      ...DashboardPullRequestFields
+    }}
+  }}
+}}
+
+{DASHBOARD_PULL_REQUEST_FRAGMENT}"#
+    )
+}
+
+fn escape_graphql_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+const DASHBOARD_PULL_REQUEST_FRAGMENT: &str = r#"
+fragment DashboardPullRequestFields on PullRequest {
+  repository { nameWithOwner }
+  number
+  title
+  url
+  isDraft
+  reviewDecision
+  updatedAt
+  author { login }
+  reviews(last: 20) {
+    nodes {
+      author { login __typename }
+      state
+    }
+  }
+  reviewRequests(first: 20) {
+    nodes {
+      requestedReviewer {
+        ... on User { login __typename }
+        ... on Team { name __typename }
+      }
+    }
+  }
+  commits(last: 1) {
+    nodes {
+      commit {
+        statusCheckRollup { state }
+      }
+    }
+  }
+}
+"#;
 
 fn dashboard_check_status(state: &str) -> Option<String> {
     match state {
@@ -358,6 +410,19 @@ struct GhReview {
 #[serde(rename_all = "camelCase")]
 struct DashboardSearchResponse {
     data: DashboardSearchData,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardResponse {
+    data: DashboardData,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardData {
+    my_prs: DashboardSearchConnection,
+    review_requests: DashboardSearchConnection,
 }
 
 #[derive(Debug, Deserialize)]
@@ -560,9 +625,28 @@ impl From<SearchPullRequest> for PullRequest {
 
 impl DashboardSearchResponse {
     fn into_pull_requests(self) -> Vec<PullRequest> {
-        self.data
-            .search
-            .nodes
+        self.data.search.into_pull_requests()
+    }
+}
+
+impl DashboardResponse {
+    fn into_dashboard(self, login: &str) -> (Vec<PullRequest>, Vec<PullRequest>) {
+        let my_prs = self.data.my_prs.into_pull_requests();
+        let reviews = self
+            .data
+            .review_requests
+            .into_pull_requests()
+            .into_iter()
+            .filter(|pr| pr.review_requested.iter().any(|reviewer| reviewer == login))
+            .collect();
+
+        (my_prs, reviews)
+    }
+}
+
+impl DashboardSearchConnection {
+    fn into_pull_requests(self) -> Vec<PullRequest> {
+        self.nodes
             .into_iter()
             .map(DashboardSearchPullRequest::into_pull_request)
             .collect()
@@ -1031,6 +1115,80 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn converts_combined_dashboard_response_to_sections() {
+        let response: DashboardResponse = serde_json::from_str(
+            r#"
+            {
+              "data": {
+                "myPrs": {
+                  "nodes": [{
+                    "repository": { "nameWithOwner": "owner/mine" },
+                    "number": 1,
+                    "title": "Mine",
+                    "author": { "login": "octocat" },
+                    "reviewDecision": null,
+                    "updatedAt": "2026-07-01T10:00:00Z",
+                    "isDraft": false,
+                    "url": "https://example.test/mine",
+                    "reviews": { "nodes": [] },
+                    "reviewRequests": { "nodes": [] },
+                    "commits": { "nodes": [] }
+                  }]
+                },
+                "reviewRequests": {
+                  "nodes": [
+                    {
+                      "repository": { "nameWithOwner": "owner/review" },
+                      "number": 2,
+                      "title": "Review me",
+                      "author": { "login": "alice" },
+                      "reviewDecision": "REVIEW_REQUIRED",
+                      "updatedAt": "2026-07-01T11:00:00Z",
+                      "isDraft": false,
+                      "url": "https://example.test/review",
+                      "reviews": { "nodes": [] },
+                      "reviewRequests": {
+                        "nodes": [{
+                          "requestedReviewer": { "login": "octocat", "__typename": "User" }
+                        }]
+                      },
+                      "commits": { "nodes": [] }
+                    },
+                    {
+                      "repository": { "nameWithOwner": "owner/team" },
+                      "number": 3,
+                      "title": "Team review",
+                      "author": { "login": "bob" },
+                      "reviewDecision": "REVIEW_REQUIRED",
+                      "updatedAt": "2026-07-01T12:00:00Z",
+                      "isDraft": false,
+                      "url": "https://example.test/team",
+                      "reviews": { "nodes": [] },
+                      "reviewRequests": {
+                        "nodes": [{
+                          "requestedReviewer": { "name": "platform", "__typename": "Team" }
+                        }]
+                      },
+                      "commits": { "nodes": [] }
+                    }
+                  ]
+                }
+              }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let (my_prs, reviews) = response.into_dashboard("octocat");
+
+        assert_eq!(my_prs.len(), 1);
+        assert_eq!(my_prs[0].repo, "owner/mine");
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].repo, "owner/review");
+        assert_eq!(reviews[0].review_requested, vec!["octocat".to_owned()]);
     }
 
     #[test]

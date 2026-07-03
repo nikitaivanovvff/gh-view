@@ -66,6 +66,8 @@ Follow this structure as the project grows:
 - Keep modules small and focused.
 - Prefer explicit domain models for PRs, repositories, reviewers, checks, and comments.
 - Keep GitHub CLI execution isolated behind `src/github/`.
+- Keep dashboard refreshes bulk-oriented. Prefer a single GraphQL request for dashboard-wide data, and avoid per-PR `gh` calls in list views.
+- Keep long-running `gh` calls off the TUI event loop. Start them from `src/app.rs`, poll completion, and redraw only after input, resize, or background state changes.
 - Avoid network calls in unit tests; mock command execution or test parsing separately.
 - Prefer mock/demo data behind the data-source trait for UI development instead of hard-coding fixtures in UI rendering.
 - Model PR discussion as a unified list of issue comments and review threads. Code context should be optional on each discussion item, because issue comments do not have file/line context while review threads do.
