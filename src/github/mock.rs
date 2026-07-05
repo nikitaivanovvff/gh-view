@@ -1,16 +1,49 @@
-use super::{GhStatus, PullRequestSource};
+#[cfg(test)]
+use super::DEFAULT_GH_COMMAND_TIMEOUT_SECONDS;
+use super::{GhError, GhStatus, MockErrorMode, PullRequestSource};
 use crate::model::{
     CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind, DiscussionReply,
     PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
 };
-use anyhow::Result;
+use anyhow::{Result, bail};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
-pub struct MockGhClient;
+pub struct MockGhClient {
+    error_mode: Arc<Mutex<Option<MockErrorMode>>>,
+    gh_timeout_seconds: u64,
+}
 
 impl MockGhClient {
+    #[cfg(test)]
     pub fn new() -> Self {
-        Self
+        Self::with_timeout(DEFAULT_GH_COMMAND_TIMEOUT_SECONDS)
+    }
+
+    pub fn with_timeout(gh_timeout_seconds: u64) -> Self {
+        Self {
+            error_mode: Arc::new(Mutex::new(None)),
+            gh_timeout_seconds,
+        }
+    }
+
+    fn maybe_fail(&self) -> Result<()> {
+        match self.mock_error_mode() {
+            Some(MockErrorMode::GitHubDown) => bail!(GhError::GitHubOutage(
+                "HTTP 503 Service Unavailable: GitHub API is currently unavailable".to_owned()
+            )),
+            Some(MockErrorMode::Timeout) => bail!(GhError::Timeout(format!(
+                "gh command timed out after {}s: gh api graphql",
+                self.gh_timeout_seconds
+            ))),
+            Some(MockErrorMode::Generic) => bail!(GhError::Command(
+                "mock gh command failed with a generic API error".to_owned()
+            )),
+            Some(MockErrorMode::Auth) => bail!(GhError::Unauthenticated(
+                "mock gh requires authentication; run `gh auth login`".to_owned()
+            )),
+            None => Ok(()),
+        }
     }
 }
 
@@ -25,11 +58,29 @@ impl PullRequestSource for MockGhClient {
         }
     }
 
+    fn is_mock(&self) -> bool {
+        true
+    }
+
+    fn mock_error_mode(&self) -> Option<MockErrorMode> {
+        self.error_mode.lock().ok().and_then(|mode| *mode)
+    }
+
+    fn set_mock_error_mode(&mut self, mode: Option<MockErrorMode>) {
+        if let Ok(mut current) = self.error_mode.lock() {
+            *current = mode;
+        }
+    }
+
     fn current_user(&self) -> Result<String> {
+        if self.mock_error_mode() == Some(MockErrorMode::Auth) {
+            self.maybe_fail()?;
+        }
         Ok("nikita".to_owned())
     }
 
     fn fetch_my_prs(&self, _login: &str) -> Result<Vec<PullRequest>> {
+        self.maybe_fail()?;
         Ok(vec![
             mock_pr(MockPr {
                 repo: "earendil/gh-view",
@@ -68,6 +119,7 @@ impl PullRequestSource for MockGhClient {
     }
 
     fn fetch_review_requests(&self, _login: &str) -> Result<Vec<PullRequest>> {
+        self.maybe_fail()?;
         Ok(vec![
             mock_pr(MockPr {
                 repo: "earendil/overseer",
@@ -106,6 +158,7 @@ impl PullRequestSource for MockGhClient {
     }
 
     fn fetch_pr_detail(&self, pr: &PullRequest) -> Result<PullRequestDetail> {
+        self.maybe_fail()?;
         Ok(PullRequestDetail {
             pr: pr.clone(),
             body: "This PR wires the phase-2 detail screen. It keeps GitHub access behind the data-source trait and renders comments/reviews in a flat terminal layout.".to_owned(),

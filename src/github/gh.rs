@@ -4,11 +4,14 @@ use self::types::{
     DashboardResponse, DashboardSearchResponse, DetailPullRequest, ReviewThreadsResponse,
     SearchPullRequest,
 };
-use super::{GhStatus, PullRequestSource};
+use super::{GhError, GhStatus, PullRequestSource};
 use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::de::DeserializeOwned;
-use std::process::Command;
+use std::io;
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const SEARCH_FIELDS: &str = "repository,number,title,author,updatedAt,state,isDraft,url";
 const DETAIL_FIELDS: &str = "number,title,author,updatedAt,isDraft,url,body,state,mergeable,headRefName,baseRefName,reviewDecision,statusCheckRollup,comments,reviews";
@@ -39,20 +42,21 @@ query($owner: String!, $name: String!, $number: Int!) {
 "#;
 
 #[derive(Clone)]
-pub struct GhClient;
+pub struct GhClient {
+    timeout: Duration,
+}
 
 impl GhClient {
-    pub fn new() -> Self {
-        Self
+    pub fn new(timeout_seconds: u64) -> Self {
+        Self {
+            timeout: Duration::from_secs(timeout_seconds.max(1)),
+        }
     }
 
     fn current_user_login(&self) -> Result<String> {
-        let output = Command::new("gh")
-            .args(["api", "user", "--jq", ".login"])
-            .output()
-            .context("failed to run gh api user")?;
+        let output = self.run_gh(["api", "user", "--jq", ".login"])?;
         if !output.status.success() {
-            bail!(command_error(&output));
+            bail!(GhError::from_command_output(command_error(&output)));
         }
 
         let login = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -67,13 +71,10 @@ impl GhClient {
         let mut args = vec!["search", "prs", "--state", "open", "--json", SEARCH_FIELDS];
         args.extend_from_slice(filter);
 
-        let output = Command::new("gh")
-            .args(args)
-            .output()
-            .context("failed to run gh search prs")?;
+        let output = self.run_gh(args)?;
 
         if !output.status.success() {
-            bail!(command_error(&output));
+            bail!(GhError::from_command_output(command_error(&output)));
         }
 
         let rows: Vec<SearchPullRequest> = serde_json::from_slice(&output.stdout)
@@ -95,13 +96,10 @@ impl GhClient {
 
     fn graphql<T: DeserializeOwned>(&self, graphql: String) -> Result<T> {
         let query_field = format!("query={graphql}");
-        let output = Command::new("gh")
-            .args(["api", "graphql", "-f", &query_field])
-            .output()
-            .context("failed to run gh api graphql")?;
+        let output = self.run_gh(["api", "graphql", "-f", &query_field])?;
 
         if !output.status.success() {
-            bail!(command_error(&output));
+            bail!(GhError::from_command_output(command_error(&output)));
         }
 
         serde_json::from_slice(&output.stdout).context("failed to parse gh GraphQL output")
@@ -109,21 +107,18 @@ impl GhClient {
 
     fn pr_view(&self, pr: &PullRequest) -> Result<PullRequestDetail> {
         let number = pr.number.to_string();
-        let output = Command::new("gh")
-            .args([
-                "pr",
-                "view",
-                &number,
-                "--repo",
-                &pr.repo,
-                "--json",
-                DETAIL_FIELDS,
-            ])
-            .output()
-            .context("failed to run gh pr view")?;
+        let output = self.run_gh([
+            "pr",
+            "view",
+            &number,
+            "--repo",
+            &pr.repo,
+            "--json",
+            DETAIL_FIELDS,
+        ])?;
 
         if !output.status.success() {
-            bail!(command_error(&output));
+            bail!(GhError::from_command_output(command_error(&output)));
         }
 
         let row: DetailPullRequest = serde_json::from_slice(&output.stdout)
@@ -139,24 +134,21 @@ impl GhClient {
         let name_field = format!("name={name}");
         let number_field = format!("number={number}");
 
-        let output = Command::new("gh")
-            .args([
-                "api",
-                "graphql",
-                "-f",
-                &query_field,
-                "-F",
-                &owner_field,
-                "-F",
-                &name_field,
-                "-F",
-                &number_field,
-            ])
-            .output()
-            .context("failed to run gh api graphql for review threads")?;
+        let output = self.run_gh([
+            "api",
+            "graphql",
+            "-f",
+            &query_field,
+            "-F",
+            &owner_field,
+            "-F",
+            &name_field,
+            "-F",
+            &number_field,
+        ])?;
 
         if !output.status.success() {
-            bail!(command_error(&output));
+            bail!(GhError::from_command_output(command_error(&output)));
         }
 
         let response: ReviewThreadsResponse = serde_json::from_slice(&output.stdout)
@@ -172,11 +164,11 @@ impl PullRequestSource for GhClient {
     }
 
     fn status(&self) -> GhStatus {
-        let Some(version) = gh_version() else {
+        let Some(version) = gh_version_with_timeout(self.timeout) else {
             return GhStatus::Missing;
         };
 
-        let auth_status = Command::new("gh").args(["auth", "status"]).output();
+        let auth_status = self.run_gh(["auth", "status"]);
         match auth_status {
             Ok(output) if output.status.success() => GhStatus::Ready { version },
             Ok(output) => GhStatus::Unauthenticated {
@@ -233,8 +225,8 @@ impl PullRequestSource for GhClient {
     }
 }
 
-pub fn gh_version() -> Option<String> {
-    let output = Command::new("gh").arg("--version").output().ok()?;
+fn gh_version_with_timeout(timeout: Duration) -> Option<String> {
+    let output = run_gh(["--version"], timeout).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -329,6 +321,73 @@ fn command_error(output: &std::process::Output) -> String {
         stdout
     } else {
         format!("command exited with {}", output.status)
+    }
+}
+
+impl GhClient {
+    fn run_gh<I, S>(&self, args: I) -> Result<Output>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        run_gh(args, self.timeout)
+    }
+}
+
+fn run_gh<I, S>(args: I, timeout: Duration) -> Result<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_owned())
+        .collect();
+    let mut child = Command::new("gh")
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| gh_spawn_error(error, &args))?;
+    let started = Instant::now();
+
+    loop {
+        if child
+            .try_wait()
+            .context("failed to poll gh command")?
+            .is_some()
+        {
+            return child
+                .wait_with_output()
+                .context("failed to collect gh command output");
+        }
+
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!(GhError::Timeout(format!(
+                "gh command timed out after {}s: gh {}",
+                timeout.as_secs(),
+                args.join(" ")
+            )));
+        }
+
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn gh_spawn_error(error: io::Error, args: &[String]) -> anyhow::Error {
+    if error.kind() == io::ErrorKind::NotFound {
+        anyhow!(GhError::Missing(format!(
+            "GitHub CLI `gh` was not found on PATH while running: gh {}",
+            args.join(" ")
+        )))
+    } else {
+        anyhow!(GhError::Command(format!(
+            "failed to run gh {}: {error}",
+            args.join(" ")
+        )))
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::app::{App, AppView};
+use crate::github::MockErrorMode;
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 
@@ -35,6 +36,26 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
             }
             KeyCode::Char('r') => {
                 app.refresh_async();
+                true
+            }
+            KeyCode::Char('0') if app.is_mock() => {
+                app.set_mock_error_mode(None);
+                true
+            }
+            KeyCode::Char('1') if app.is_mock() => {
+                app.set_mock_error_mode(Some(MockErrorMode::GitHubDown));
+                true
+            }
+            KeyCode::Char('2') if app.is_mock() => {
+                app.set_mock_error_mode(Some(MockErrorMode::Timeout));
+                true
+            }
+            KeyCode::Char('3') if app.is_mock() => {
+                app.set_mock_error_mode(Some(MockErrorMode::Generic));
+                true
+            }
+            KeyCode::Char('4') if app.is_mock() => {
+                app.set_mock_error_mode(Some(MockErrorMode::Auth));
                 true
             }
             KeyCode::Char('b') => {
@@ -99,7 +120,7 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
 mod tests {
     use super::*;
     use crate::app::{DetailPane, DetailStatus};
-    use crate::github::{GhStatus, MockGhClient, PullRequestSource};
+    use crate::github::{GhStatus, MockErrorMode, MockGhClient, PullRequestSource};
     use crate::model::{PullRequest, PullRequestDetail};
     use anyhow::Result;
     use crossterm::event::{KeyEvent, KeyEventState, KeyModifiers};
@@ -187,6 +208,31 @@ mod tests {
             key(KeyCode::Char('q'), &mut app),
             InputOutcome::Quit
         ));
+    }
+
+    #[test]
+    fn mock_error_keys_are_mock_only() {
+        let mut mock_app = App::new(Box::new(MockGhClient::new()));
+
+        assert_continue_changed(key(KeyCode::Char('1'), &mut mock_app), true);
+        assert_eq!(mock_app.mock_error_mode(), Some(MockErrorMode::GitHubDown));
+        assert_continue_changed(key(KeyCode::Char('0'), &mut mock_app), true);
+        assert_eq!(mock_app.mock_error_mode(), None);
+
+        let mut live_like_app = App::new(Box::new(EmptySource));
+        assert_continue_changed(key(KeyCode::Char('1'), &mut live_like_app), false);
+        assert_eq!(live_like_app.mock_error_mode(), None);
+    }
+
+    #[test]
+    fn mock_error_keys_replace_active_mock_load() {
+        let mut app = App::new(Box::new(MockGhClient::new()));
+        app.dashboard_loading = true;
+
+        assert_continue_changed(key(KeyCode::Char('1'), &mut app), true);
+
+        assert_eq!(app.mock_error_mode(), Some(MockErrorMode::GitHubDown));
+        assert!(app.dashboard_loading);
     }
 
     #[test]
