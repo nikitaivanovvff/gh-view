@@ -338,22 +338,32 @@ fn code_context_lines(item: &DiscussionItem, width: usize) -> Vec<Line<'static>>
     ]));
 
     for code in &context.lines {
+        let highlighted = code.number == context.highlighted_line;
         let marker = match code.kind {
             CodeLineKind::Added => "+",
             CodeLineKind::Removed => "-",
             CodeLineKind::Context => " ",
         };
-        let style = match code.kind {
+        let mut style = match code.kind {
             CodeLineKind::Added => theme::success(),
             CodeLineKind::Removed => theme::danger(),
             CodeLineKind::Context => theme::normal(),
         };
+        if highlighted {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
         let number = code
             .number
             .map(|line| format!("{line:>4}"))
             .unwrap_or_else(|| "    ".to_owned());
+        let gutter = if highlighted { "▸" } else { " " };
+        let number_style = if highlighted {
+            theme::accent().add_modifier(Modifier::BOLD)
+        } else {
+            theme::muted()
+        };
         lines.push(Line::from(vec![
-            Span::styled(format!("{number} {marker} "), theme::muted()),
+            Span::styled(format!("{gutter}{number} {marker} "), number_style),
             Span::styled(truncate(&code.text, width.saturating_sub(8).max(1)), style),
         ]));
     }

@@ -203,6 +203,8 @@ struct ReviewThreadsRepository {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReviewThreadsPullRequest {
+    #[serde(default)]
+    head_ref_oid: String,
     review_threads: ReviewThreadConnection,
 }
 
@@ -381,30 +383,48 @@ impl DashboardSearchPullRequest {
 }
 
 impl ReviewThreadsResponse {
-    pub(super) fn into_discussion_items(self) -> Vec<DiscussionItem> {
+    pub(super) fn head_ref_oid(&self) -> &str {
+        &self.data.repository.pull_request.head_ref_oid
+    }
+
+    pub(super) fn into_discussion_items_with_context<F>(
+        self,
+        mut load_context: F,
+    ) -> Vec<DiscussionItem>
+    where
+        F: FnMut(&str, u64) -> Option<Vec<CodeContextLine>>,
+    {
         self.data
             .repository
             .pull_request
             .review_threads
             .nodes
             .into_iter()
-            .filter_map(ReviewThreadNode::into_discussion_item)
+            .filter_map(|thread| thread.into_discussion_item(&mut load_context))
             .collect()
     }
 }
 
 impl ReviewThreadNode {
-    fn into_discussion_item(self) -> Option<DiscussionItem> {
+    fn into_discussion_item<F>(self, load_context: &mut F) -> Option<DiscussionItem>
+    where
+        F: FnMut(&str, u64) -> Option<Vec<CodeContextLine>>,
+    {
         let mut comments = self.comments.nodes.into_iter();
         let first = comments.next()?;
         let highlighted_line = self.line.or(self.original_line);
-        let lines = parse_diff_hunk(&first.diff_hunk);
+        let path = self.path;
+        let lines = highlighted_line
+            .filter(|_| !path.is_empty())
+            .and_then(|line| load_context(&path, line))
+            .filter(|lines| !lines.is_empty())
+            .unwrap_or_else(|| parse_diff_hunk(&first.diff_hunk));
         let start_line = lines.iter().find_map(|line| line.number);
-        let code_context = if self.path.is_empty() && lines.is_empty() {
+        let code_context = if path.is_empty() && lines.is_empty() {
             None
         } else {
             Some(CodeContext {
-                path: self.path,
+                path,
                 start_line,
                 highlighted_line,
                 lines,
@@ -906,7 +926,7 @@ mod tests {
             comments: ReviewThreadCommentConnection { nodes: Vec::new() },
         };
 
-        assert!(thread.into_discussion_item().is_none());
+        assert!(thread.into_discussion_item(&mut |_, _| None).is_none());
     }
 
     #[test]
@@ -917,6 +937,7 @@ mod tests {
               "data": {
                 "repository": {
                   "pullRequest": {
+                    "headRefOid": "abc123",
                     "reviewThreads": {
                       "nodes": [{
                         "isResolved": false,
@@ -951,7 +972,17 @@ mod tests {
         )
         .unwrap();
 
-        let items = response.into_discussion_items();
+        assert_eq!(response.head_ref_oid(), "abc123");
+
+        let items = response.into_discussion_items_with_context(|path, line| {
+            assert_eq!(path, "src/main.rs");
+            assert_eq!(line, 42);
+            Some(vec![CodeContextLine {
+                number: Some(42),
+                kind: CodeLineKind::Context,
+                text: "loaded source line".to_owned(),
+            }])
+        });
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].author, "alice");
         assert_eq!(items[0].replies.len(), 1);
@@ -963,6 +994,45 @@ mod tests {
         let context = items[0].code_context.as_ref().unwrap();
         assert_eq!(context.path, "src/main.rs");
         assert_eq!(context.highlighted_line, Some(42));
+        assert_eq!(context.lines[0].text, "loaded source line");
+    }
+
+    #[test]
+    fn falls_back_to_diff_hunk_when_source_context_is_unavailable() {
+        let response: ReviewThreadsResponse = serde_json::from_str(
+            r#"
+            {
+              "data": {
+                "repository": {
+                  "pullRequest": {
+                    "reviewThreads": {
+                      "nodes": [{
+                        "isResolved": false,
+                        "path": "src/main.rs",
+                        "line": 42,
+                        "originalLine": null,
+                        "comments": {
+                          "nodes": [{
+                            "author": { "login": "alice" },
+                            "body": "Could we change this?",
+                            "diffHunk": "@@ -41,2 +41,2 @@\n old\n+new",
+                            "createdAt": "2026-07-01T10:00:00Z",
+                            "url": "https://example.test/thread#1"
+                          }]
+                        }
+                      }]
+                    }
+                  }
+                }
+              }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let items = response.into_discussion_items_with_context(|_, _| None);
+        let context = items[0].code_context.as_ref().unwrap();
+        assert!(context.lines.iter().any(|line| line.text == "new"));
     }
 
     #[test]

@@ -18,6 +18,7 @@ const REVIEW_THREADS_QUERY: &str = r#"
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      headRefOid
       reviewThreads(first: 50) {
         nodes {
           isResolved
@@ -152,8 +153,43 @@ impl GhClient {
 
         let response: ReviewThreadsResponse = serde_json::from_slice(&output.stdout)
             .context("failed to parse gh review threads GraphQL output")?;
-        let items = response.into_discussion_items();
+        let head_ref_oid = response.head_ref_oid().to_owned();
+        let items = response.into_discussion_items_with_context(|path, line| {
+            self.file_context(owner, name, &head_ref_oid, path, line)
+                .ok()
+        });
         Ok(items)
+    }
+
+    fn file_context(
+        &self,
+        owner: &str,
+        name: &str,
+        ref_oid: &str,
+        path: &str,
+        line: u64,
+    ) -> Result<Vec<crate::model::CodeContextLine>> {
+        let endpoint = format!("repos/{owner}/{name}/contents/{}", encode_path(path));
+        let ref_field = format!("ref={ref_oid}");
+        let output = self.run_gh([
+            "api",
+            &endpoint,
+            "--method",
+            "GET",
+            "-H",
+            "Accept: application/vnd.github.raw",
+            "-f",
+            &ref_field,
+        ])?;
+
+        if !output.status.success() {
+            bail!(GhError::from_command_output(command_error(&output)));
+        }
+
+        Ok(source_context_lines(
+            &String::from_utf8_lossy(&output.stdout),
+            line,
+        ))
     }
 }
 
@@ -316,6 +352,44 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
         .context("repository name must be in owner/name format")
 }
 
+fn source_context_lines(text: &str, highlighted_line: u64) -> Vec<crate::model::CodeContextLine> {
+    const CONTEXT_RADIUS: u64 = 10;
+
+    let start = highlighted_line.saturating_sub(CONTEXT_RADIUS).max(1);
+    let end = highlighted_line.saturating_add(CONTEXT_RADIUS);
+
+    text.lines()
+        .enumerate()
+        .filter_map(|(index, text)| {
+            let number = index as u64 + 1;
+            (number >= start && number <= end).then(|| crate::model::CodeContextLine {
+                number: Some(number),
+                kind: crate::model::CodeLineKind::Context,
+                text: text.to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn encode_path(path: &str) -> String {
+    path.split('/')
+        .map(encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn encode_path_segment(segment: &str) -> String {
+    segment
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +418,33 @@ mod tests {
         assert_eq!(split_repo("owner/name").unwrap(), ("owner", "name"));
         assert!(split_repo("owner").is_err());
         assert!(split_repo("owner/").is_err());
+    }
+
+    #[test]
+    fn source_context_lines_centers_around_highlighted_line() {
+        let text = (1..=100)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let lines = source_context_lines(&text, 75);
+
+        assert_eq!(lines.first().and_then(|line| line.number), Some(65));
+        assert_eq!(lines.last().and_then(|line| line.number), Some(85));
+        assert!(lines.iter().any(|line| line.number == Some(75)));
+    }
+
+    #[test]
+    fn source_context_lines_clamps_to_file_start() {
+        let lines = source_context_lines("one\ntwo\nthree", 2);
+
+        assert_eq!(lines.first().and_then(|line| line.number), Some(1));
+        assert_eq!(lines.last().and_then(|line| line.number), Some(3));
+    }
+
+    #[test]
+    fn encodes_content_api_paths() {
+        assert_eq!(encode_path("src/main.rs"), "src/main.rs");
+        assert_eq!(encode_path("docs/my file#.md"), "docs/my%20file%23.md");
     }
 }
