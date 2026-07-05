@@ -67,10 +67,14 @@ Check dependencies/authentication:
 gh-view doctor
 ```
 
-Run with built-in mock data and no GitHub calls:
+## Configuration
 
-```sh
-gh-view --mock
+Optional configuration is read from `~/.config/gh-view/config.toml`.
+
+```toml
+# How long gh-view waits for a `gh` command before stopping it.
+# Default: 30 seconds.
+gh_timeout_seconds = 30
 ```
 
 ## Keybindings
