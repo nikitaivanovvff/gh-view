@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod app;
+mod config;
 mod github;
 mod model;
 mod ui;
@@ -29,26 +30,30 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config = config::Config::load()?;
 
     match cli.command.unwrap_or(Commands::Dashboard) {
-        Commands::Dashboard => ui::run(client(cli.mock)),
-        Commands::Doctor => run_doctor(cli.mock),
+        Commands::Dashboard => ui::run(client(cli.mock, &config)),
+        Commands::Doctor => run_doctor(cli.mock, &config),
     }
 }
 
-fn client(mock: bool) -> Box<dyn github::PullRequestSource> {
+fn client(mock: bool, config: &config::Config) -> Box<dyn github::PullRequestSource> {
     if mock {
-        Box::new(github::MockGhClient::new())
+        Box::new(github::MockGhClient::with_timeout(
+            config.gh_timeout_seconds,
+        ))
     } else {
-        Box::new(github::GhClient::new())
+        Box::new(github::GhClient::new(config.gh_timeout_seconds))
     }
 }
 
-fn run_doctor(mock: bool) -> Result<()> {
-    let client = client(mock);
+fn run_doctor(mock: bool, config: &config::Config) -> Result<()> {
+    let client = client(mock, config);
 
     println!("gh-view doctor");
     println!("Rust CLI is installed and runnable.");
+    println!("gh command timeout: {}s", config.gh_timeout_seconds);
 
     if mock {
         println!("Data source: built-in mock data");

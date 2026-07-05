@@ -1,6 +1,8 @@
 mod rows;
 
-use crate::github::PullRequestSource;
+use crate::github::{
+    GhError, MockErrorMode, PullRequestSource, is_auth_error, is_github_outage_error,
+};
 use crate::model::{Dashboard, PullRequest, PullRequestDetail};
 pub use rows::{DashboardSection, Row};
 use rows::{group_names, push_groups};
@@ -8,7 +10,7 @@ use std::collections::BTreeSet;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
-type DashboardLoad = Result<(String, Vec<PullRequest>, Vec<PullRequest>), String>;
+type DashboardLoad = Result<(String, Vec<PullRequest>, Vec<PullRequest>), AppStatus>;
 type DashboardReceiver = Receiver<DashboardLoad>;
 
 pub struct App {
@@ -61,7 +63,7 @@ impl App {
     #[cfg(test)]
     pub fn refresh(&mut self) {
         let result = refresh_dashboard(self.client.clone(), self.current_user.clone());
-        self.apply_refresh_result(result.map_err(|error| error.to_string()));
+        self.apply_refresh_result(result.map_err(classify_refresh_error));
     }
 
     pub fn refresh_async(&mut self) {
@@ -77,7 +79,7 @@ impl App {
         self.loading_frame = 0;
 
         thread::spawn(move || {
-            let result = refresh_dashboard(client, current_user).map_err(|error| error.to_string());
+            let result = refresh_dashboard(client, current_user).map_err(classify_refresh_error);
             let _ = tx.send(result);
         });
     }
@@ -98,8 +100,8 @@ impl App {
                 self.status = AppStatus::Ready;
                 self.clamp_selection();
             }
-            Err(error) => {
-                self.status = classify_refresh_error(error);
+            Err(status) => {
+                self.status = status;
                 self.dashboard = Dashboard::default();
             }
         }
@@ -108,8 +110,13 @@ impl App {
     pub fn rows(&self) -> Vec<Row<'_>> {
         match &self.status {
             AppStatus::MissingGh => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
-            AppStatus::Unauthenticated(message) => return vec![Row::Message(format!("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry. {message}"))],
-            AppStatus::Error(message) if self.dashboard.is_empty() => return vec![Row::Message(format!("Could not load pull requests. Press r to retry. {message}"))],
+            AppStatus::Unauthenticated(_) => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
+            AppStatus::GitHubOutage(_) if self.dashboard.is_empty() => return github_outage_rows(),
+            AppStatus::Timeout(_) if self.dashboard.is_empty() => return vec![
+                Row::Message("GitHub is taking too long to answer.".to_owned()),
+                Row::Message("The last gh command was stopped after 30s. Press r to retry.".to_owned()),
+            ],
+            AppStatus::Error(_) if self.dashboard.is_empty() => return vec![Row::Message("Could not load pull requests. Press r to retry.".to_owned())],
             _ => {}
         }
 
@@ -437,6 +444,80 @@ impl App {
             self.loading_frame = self.loading_frame.wrapping_add(1);
         }
     }
+
+    pub fn dashboard_error_page(&self) -> Option<DashboardErrorPage> {
+        if !self.dashboard.is_empty() {
+            return None;
+        }
+
+        match self.status {
+            AppStatus::MissingGh => Some(DashboardErrorPage {
+                art: Vec::new(),
+                lines: vec![
+                    DashboardErrorLine::Text("GitHub CLI `gh` was not found on PATH.".to_owned()),
+                    DashboardErrorLine::Text(
+                        "Install it, authenticate it, then press r to retry.".to_owned(),
+                    ),
+                ],
+            }),
+            AppStatus::Unauthenticated(_) => Some(DashboardErrorPage {
+                art: Vec::new(),
+                lines: vec![
+                    DashboardErrorLine::Text("GitHub CLI is not authenticated.".to_owned()),
+                    DashboardErrorLine::Text(
+                        "Run `gh auth login`, then press r to retry.".to_owned(),
+                    ),
+                ],
+            }),
+            AppStatus::GitHubOutage(_) => Some(DashboardErrorPage {
+                art: vec![
+                    "        Zzz".to_owned(),
+                    "     /\\_/\\".to_owned(),
+                    "    ( -.- )".to_owned(),
+                    "    / >  < \\".to_owned(),
+                    "GitHub cat is asleep on the deploy button".to_owned(),
+                ],
+                lines: vec![
+                    DashboardErrorLine::Text("Looks like GitHub is having a problem.".to_owned()),
+                    DashboardErrorLine::StatusPage,
+                ],
+            }),
+            AppStatus::Timeout(_) => Some(DashboardErrorPage {
+                art: Vec::new(),
+                lines: vec![
+                    DashboardErrorLine::Text("GitHub is taking too long to answer.".to_owned()),
+                    DashboardErrorLine::Text(
+                        "The last gh command was stopped. Press r to retry.".to_owned(),
+                    ),
+                ],
+            }),
+            AppStatus::Error(_) => Some(DashboardErrorPage {
+                art: Vec::new(),
+                lines: vec![DashboardErrorLine::Text(
+                    "Could not load pull requests. Press r to retry.".to_owned(),
+                )],
+            }),
+            AppStatus::Ready => None,
+        }
+    }
+
+    pub fn is_mock(&self) -> bool {
+        self.client.is_mock()
+    }
+
+    pub fn mock_error_mode(&self) -> Option<MockErrorMode> {
+        self.client.mock_error_mode()
+    }
+
+    pub fn set_mock_error_mode(&mut self, mode: Option<MockErrorMode>) {
+        if !self.client.is_mock() {
+            return;
+        }
+        self.client.set_mock_error_mode(mode);
+        self.dashboard_loading = false;
+        self.dashboard_rx = None;
+        self.refresh_async();
+    }
 }
 
 fn refresh_dashboard(
@@ -453,21 +534,60 @@ fn refresh_dashboard(
     Ok((user, my_prs, reviews))
 }
 
-fn classify_refresh_error(message: String) -> AppStatus {
+fn classify_refresh_error(error: anyhow::Error) -> AppStatus {
+    if let Some(error) = error.downcast_ref::<GhError>() {
+        return match error {
+            GhError::Missing(_) => AppStatus::MissingGh,
+            GhError::Unauthenticated(message) => AppStatus::Unauthenticated(message.clone()),
+            GhError::GitHubOutage(message) => AppStatus::GitHubOutage(message.clone()),
+            GhError::Timeout(message) => AppStatus::Timeout(message.clone()),
+            GhError::Command(message) => classify_refresh_message(message.clone()),
+        };
+    }
+
+    classify_refresh_message(error.to_string())
+}
+
+fn classify_refresh_message(message: String) -> AppStatus {
     if message.contains("executable file not found")
         || message.contains("No such file or directory")
         || message.contains("failed to run gh")
     {
         AppStatus::MissingGh
-    } else if message.contains("gh auth login")
-        || message.contains("not logged")
-        || message.contains("authentication")
-        || message.contains("HTTP 401")
-    {
+    } else if is_auth_error(&message) {
         AppStatus::Unauthenticated(message)
+    } else if is_github_outage_error(&message) {
+        AppStatus::GitHubOutage(message)
+    } else if message.contains("timed out after ") {
+        AppStatus::Timeout(message)
     } else {
         AppStatus::Error(message)
     }
+}
+
+fn github_outage_rows() -> Vec<Row<'static>> {
+    vec![
+        Row::Message("        Zzz".to_owned()),
+        Row::Message("     /\\_/\\".to_owned()),
+        Row::Message("    ( -.- )".to_owned()),
+        Row::Message("    / >  < \\".to_owned()),
+        Row::Message("GitHub cat is asleep on the deploy button".to_owned()),
+        Row::Message(String::new()),
+        Row::Message("Looks like GitHub is having a problem.".to_owned()),
+        Row::Message("Check https://www.githubstatus.com/ and press r to retry.".to_owned()),
+    ]
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DashboardErrorPage {
+    pub art: Vec<String>,
+    pub lines: Vec<DashboardErrorLine>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DashboardErrorLine {
+    Text(String),
+    StatusPage,
 }
 
 fn placeholder_detail(pr: PullRequest) -> PullRequestDetail {
@@ -500,6 +620,8 @@ pub enum AppStatus {
     Ready,
     MissingGh,
     Unauthenticated(String),
+    GitHubOutage(String),
+    Timeout(String),
     Error(String),
 }
 
@@ -643,6 +765,43 @@ mod tests {
         app.refresh();
 
         assert!(matches!(app.status, AppStatus::Unauthenticated(_)));
+    }
+
+    #[test]
+    fn refresh_classifies_github_outage_errors() {
+        let mut source = TestSource::ok();
+        source.current_user = Err("HTTP 503 Service Unavailable".to_owned());
+        let mut app = App::new(Box::new(source));
+
+        app.refresh();
+
+        assert!(matches!(app.status, AppStatus::GitHubOutage(_)));
+        let text = app
+            .rows()
+            .into_iter()
+            .map(|row| match row {
+                Row::Message(message) => message,
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("GitHub cat is asleep"));
+        assert!(text.contains("githubstatus.com"));
+    }
+
+    #[test]
+    fn refresh_classifies_timeout_errors() {
+        let mut source = TestSource::ok();
+        source.current_user = Err("gh command timed out after 30s: gh api graphql".to_owned());
+        let mut app = App::new(Box::new(source));
+
+        app.refresh();
+
+        assert!(matches!(app.status, AppStatus::Timeout(_)));
+        assert!(matches!(
+            app.rows().first(),
+            Some(Row::Message(message)) if message.contains("taking too long")
+        ));
     }
 
     #[test]
