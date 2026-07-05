@@ -41,7 +41,10 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         Span::raw("  "),
         Span::styled(format!("{} #{}", pr.repo, pr.number), theme::muted()),
     ]));
-    summary.push(rule_line(width));
+    summary.push(focus_rule_line(
+        width,
+        app.active_detail_pane == DetailPane::Description,
+    ));
     summary.push(Line::from(vec![Span::styled(
         pr.title.clone(),
         theme::normal().add_modifier(Modifier::BOLD),
@@ -53,9 +56,9 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     summary.push(rule_line(width));
 
     if app.detail_status != DetailStatus::Loading {
-        summary.push(Line::styled(
+        summary.push(section_label(
             "DESCRIPTION",
-            theme::muted().add_modifier(Modifier::BOLD),
+            app.active_detail_pane == DetailPane::Description,
         ));
         push_wrapped(
             &mut summary,
@@ -86,11 +89,14 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         rule_line(width),
         Line::from(vec![
             Span::styled("j/k", theme::muted_key()),
-            Span::styled(format!(" {}   ", active_pane_label(app)), theme::muted()),
+            Span::styled(
+                format!(" scroll {}   ", active_pane_label(app)),
+                theme::muted(),
+            ),
             Span::styled("tab", theme::muted_key()),
-            Span::styled(" switch   ", theme::muted()),
+            Span::styled(" switch focus   ", theme::muted()),
             Span::styled("d/D", theme::muted_key()),
-            Span::styled(" desc/discussion   ", theme::muted()),
+            Span::styled(" focus panes   ", theme::muted()),
             Span::styled("n/p", theme::muted_key()),
             Span::styled(" discussion   ", theme::muted()),
             Span::styled("esc/q", theme::muted_key()),
@@ -119,7 +125,10 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         .split(area);
 
     frame.render_widget(
-        Paragraph::new(vertical_rule_lines(panes[1].height as usize)),
+        Paragraph::new(vertical_rule_lines(
+            panes[1].height as usize,
+            app.active_detail_pane == DetailPane::Discussion,
+        )),
         panes[1],
     );
 
@@ -140,17 +149,35 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
             "  no discussion selected".to_owned()
         };
         let empty = vec![
-            rule_line(panes[0].width as usize),
-            Line::styled("DISCUSSION", theme::muted().add_modifier(Modifier::BOLD)),
-            rule_line(panes[0].width as usize),
+            focus_rule_line(
+                panes[0].width as usize,
+                app.active_detail_pane == DetailPane::Discussion,
+            ),
+            section_label(
+                "DISCUSSION",
+                app.active_detail_pane == DetailPane::Discussion,
+            ),
+            focus_rule_line(
+                panes[0].width as usize,
+                app.active_detail_pane == DetailPane::Discussion,
+            ),
             Line::styled(message, theme::muted()),
         ];
         frame.render_widget(Paragraph::new(empty).style(theme::normal()), panes[0]);
         frame.render_widget(
             Paragraph::new(vec![
-                rule_line(panes[2].width as usize),
-                Line::styled("CODE CONTEXT", theme::muted().add_modifier(Modifier::BOLD)),
-                rule_line(panes[2].width as usize),
+                focus_rule_line(
+                    panes[2].width as usize,
+                    app.active_detail_pane == DetailPane::Discussion,
+                ),
+                section_label(
+                    "CODE CONTEXT",
+                    app.active_detail_pane == DetailPane::Discussion,
+                ),
+                focus_rule_line(
+                    panes[2].width as usize,
+                    app.active_detail_pane == DetailPane::Discussion,
+                ),
                 Line::styled(code_context_message, theme::muted()),
             ])
             .style(theme::normal()),
@@ -165,6 +192,7 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         total,
         panes[0].width as usize,
         &app.discussion_status,
+        app.active_detail_pane == DetailPane::Discussion,
     );
     app.discussion_scroll = app
         .discussion_scroll
@@ -176,7 +204,12 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         panes[0],
     );
     frame.render_widget(
-        Paragraph::new(code_context_lines(item, panes[2].width as usize)).style(theme::normal()),
+        Paragraph::new(code_context_lines(
+            item,
+            panes[2].width as usize,
+            app.active_detail_pane == DetailPane::Discussion,
+        ))
+        .style(theme::normal()),
         panes[2],
     );
 }
@@ -256,9 +289,31 @@ fn status_line(app: &App) -> Option<Line<'static>> {
     }
 }
 
-fn vertical_rule_lines(height: usize) -> Vec<Line<'static>> {
+fn focus_rule_line(width: usize, focused: bool) -> Line<'static> {
+    if focused {
+        Line::from(Span::styled("─".repeat(width), theme::accent()))
+    } else {
+        rule_line(width)
+    }
+}
+
+fn section_label(label: &'static str, focused: bool) -> Line<'static> {
+    let style = if focused {
+        theme::accent().add_modifier(Modifier::BOLD)
+    } else {
+        theme::muted().add_modifier(Modifier::BOLD)
+    };
+    Line::styled(label, style)
+}
+
+fn vertical_rule_lines(height: usize, focused: bool) -> Vec<Line<'static>> {
+    let style = if focused {
+        theme::accent()
+    } else {
+        theme::rule()
+    };
     (0..height)
-        .map(|_| Line::from(Span::styled("│", theme::rule())))
+        .map(|_| Line::from(Span::styled("│", style)))
         .collect()
 }
 
@@ -268,6 +323,7 @@ fn discussion_lines(
     total: usize,
     width: usize,
     discussion_status: &DiscussionStatus,
+    focused: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut label = match &item.kind {
@@ -279,15 +335,22 @@ fn discussion_lines(
         label.push_str(" · thread load failed");
     }
 
-    lines.push(rule_line(width));
+    lines.push(focus_rule_line(width, focused));
     lines.push(Line::from(vec![
-        Span::styled("DISCUSSION", theme::muted().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "DISCUSSION",
+            if focused {
+                theme::accent().add_modifier(Modifier::BOLD)
+            } else {
+                theme::muted().add_modifier(Modifier::BOLD)
+            },
+        ),
         Span::styled(
             format!("  {}/{}  {}", index + 1, total, label),
             theme::muted(),
         ),
     ]));
-    lines.push(rule_line(width));
+    lines.push(focus_rule_line(width, focused));
     lines.push(Line::from(vec![
         Span::styled(format!("@{}", item.author), theme::reviewer()),
         Span::styled(format!("  {}", age_label(&item.created_at)), theme::muted()),
@@ -310,14 +373,11 @@ fn discussion_lines(
     lines
 }
 
-fn code_context_lines(item: &DiscussionItem, width: usize) -> Vec<Line<'static>> {
+fn code_context_lines(item: &DiscussionItem, width: usize, focused: bool) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    lines.push(rule_line(width));
-    lines.push(Line::styled(
-        "CODE CONTEXT",
-        theme::muted().add_modifier(Modifier::BOLD),
-    ));
-    lines.push(rule_line(width));
+    lines.push(focus_rule_line(width, focused));
+    lines.push(section_label("CODE CONTEXT", focused));
+    lines.push(focus_rule_line(width, focused));
 
     let Some(context) = &item.code_context else {
         lines.push(Line::styled(
@@ -480,7 +540,7 @@ mod tests {
 
     #[test]
     fn vertical_rule_lines_matches_requested_height() {
-        let lines = vertical_rule_lines(3);
+        let lines = vertical_rule_lines(3, false);
 
         assert_eq!(lines.len(), 3);
         assert!(lines.iter().all(|line| line.to_string() == "│"));
@@ -521,7 +581,7 @@ mod tests {
             code_context: None,
         };
 
-        let lines = discussion_lines(&item, 0, 1, 80, &DiscussionStatus::Loading);
+        let lines = discussion_lines(&item, 0, 1, 80, &DiscussionStatus::Loading, false);
         let text = lines
             .iter()
             .map(|line| line.to_string())
@@ -546,7 +606,7 @@ mod tests {
             code_context: None,
         };
         assert!(
-            code_context_lines(&item, 80)
+            code_context_lines(&item, 80, false)
                 .iter()
                 .any(|line| line.to_string().contains("no code context"))
         );
@@ -562,7 +622,7 @@ mod tests {
             }],
         });
 
-        let text = code_context_lines(&item, 80)
+        let text = code_context_lines(&item, 80, true)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()

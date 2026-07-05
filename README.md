@@ -18,6 +18,7 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
 - PR detail view with description, branch/state/mergeability metadata, and discussion
 - Unified discussion carousel for issue comments and review threads
 - Review-thread code context rendered next to comments
+- Visible active-pane focus cues in PR detail view
 - Background loading for PR details and review-thread context
 - Mock mode for demos and local UI development without calling GitHub
 
@@ -95,11 +96,11 @@ gh_timeout_seconds = 30
 
 | Key | Action |
 | --- | --- |
-| `j` / `↓` | Scroll active pane down |
-| `k` / `↑` | Scroll active pane up |
-| `tab` | Switch active pane |
-| `d` | Focus description pane |
-| `D` | Focus discussion pane |
+| `j` / `↓` | Scroll focused pane down |
+| `k` / `↑` | Scroll focused pane up |
+| `tab` | Switch focused pane |
+| `d` | Focus description |
+| `D` | Focus discussion |
 | `n` / `→` | Next discussion item |
 | `p` / `←` | Previous discussion item |
 | `b` | Open PR in browser |
