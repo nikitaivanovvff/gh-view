@@ -38,24 +38,8 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
                 app.refresh_async();
                 true
             }
-            KeyCode::Char('0') if app.is_mock() => {
-                app.set_mock_error_mode(None);
-                true
-            }
-            KeyCode::Char('1') if app.is_mock() => {
-                app.set_mock_error_mode(Some(MockErrorMode::GitHubDown));
-                true
-            }
-            KeyCode::Char('2') if app.is_mock() => {
-                app.set_mock_error_mode(Some(MockErrorMode::Timeout));
-                true
-            }
-            KeyCode::Char('3') if app.is_mock() => {
-                app.set_mock_error_mode(Some(MockErrorMode::Generic));
-                true
-            }
-            KeyCode::Char('4') if app.is_mock() => {
-                app.set_mock_error_mode(Some(MockErrorMode::Auth));
+            KeyCode::Char(key) if app.is_mock() && mock_error_mode_for_key(key).is_some() => {
+                app.set_mock_error_mode(mock_error_mode_for_key(key).flatten());
                 true
             }
             KeyCode::Char('b') => {
@@ -114,6 +98,18 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
     };
 
     Ok(InputOutcome::Continue(changed))
+}
+
+/// Mock dashboard error controls: 0=ok, 1=GitHub down, 2=timeout, 3=generic error, 4=auth.
+fn mock_error_mode_for_key(key: char) -> Option<Option<MockErrorMode>> {
+    match key {
+        '0' => Some(None),
+        '1' => Some(Some(MockErrorMode::GitHubDown)),
+        '2' => Some(Some(MockErrorMode::Timeout)),
+        '3' => Some(Some(MockErrorMode::Generic)),
+        '4' => Some(Some(MockErrorMode::Auth)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

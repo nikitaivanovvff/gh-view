@@ -1,3 +1,4 @@
+#[path = "gh/types.rs"]
 mod types;
 
 use self::types::{
@@ -5,13 +6,11 @@ use self::types::{
     SearchPullRequest,
 };
 use super::{GhError, GhStatus, PullRequestSource};
+use crate::github::command::{GhCommand, command_error};
 use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
-use std::io;
-use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const SEARCH_FIELDS: &str = "repository,number,title,author,updatedAt,state,isDraft,url";
 const DETAIL_FIELDS: &str = "number,title,author,updatedAt,isDraft,url,body,state,mergeable,headRefName,baseRefName,reviewDecision,statusCheckRollup,comments,reviews";
@@ -43,13 +42,13 @@ query($owner: String!, $name: String!, $number: Int!) {
 
 #[derive(Clone)]
 pub struct GhClient {
-    timeout: Duration,
+    command: GhCommand,
 }
 
 impl GhClient {
     pub fn new(timeout_seconds: u64) -> Self {
         Self {
-            timeout: Duration::from_secs(timeout_seconds.max(1)),
+            command: GhCommand::new(Duration::from_secs(timeout_seconds.max(1))),
         }
     }
 
@@ -164,7 +163,7 @@ impl PullRequestSource for GhClient {
     }
 
     fn status(&self) -> GhStatus {
-        let Some(version) = gh_version_with_timeout(self.timeout) else {
+        let Some(version) = self.command.version() else {
             return GhStatus::Missing;
         };
 
@@ -223,16 +222,6 @@ impl PullRequestSource for GhClient {
         });
         Ok(discussion)
     }
-}
-
-fn gh_version_with_timeout(timeout: Duration) -> Option<String> {
-    let output = run_gh(["--version"], timeout).ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().next().map(str::trim).map(str::to_owned)
 }
 
 fn dashboard_search_query(query: &str) -> String {
@@ -311,83 +300,13 @@ fragment DashboardPullRequestFields on PullRequest {
 }
 "#;
 
-fn command_error(output: &std::process::Output) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-
-    if !stderr.is_empty() {
-        stderr
-    } else if !stdout.is_empty() {
-        stdout
-    } else {
-        format!("command exited with {}", output.status)
-    }
-}
-
 impl GhClient {
-    fn run_gh<I, S>(&self, args: I) -> Result<Output>
+    fn run_gh<I, S>(&self, args: I) -> Result<std::process::Output>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        run_gh(args, self.timeout)
-    }
-}
-
-fn run_gh<I, S>(args: I, timeout: Duration) -> Result<Output>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let args: Vec<String> = args
-        .into_iter()
-        .map(|arg| arg.as_ref().to_owned())
-        .collect();
-    let mut child = Command::new("gh")
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| gh_spawn_error(error, &args))?;
-    let started = Instant::now();
-
-    loop {
-        if child
-            .try_wait()
-            .context("failed to poll gh command")?
-            .is_some()
-        {
-            return child
-                .wait_with_output()
-                .context("failed to collect gh command output");
-        }
-
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            bail!(GhError::Timeout(format!(
-                "gh command timed out after {}s: gh {}",
-                timeout.as_secs(),
-                args.join(" ")
-            )));
-        }
-
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
-fn gh_spawn_error(error: io::Error, args: &[String]) -> anyhow::Error {
-    if error.kind() == io::ErrorKind::NotFound {
-        anyhow!(GhError::Missing(format!(
-            "GitHub CLI `gh` was not found on PATH while running: gh {}",
-            args.join(" ")
-        )))
-    } else {
-        anyhow!(GhError::Command(format!(
-            "failed to run gh {}: {error}",
-            args.join(" ")
-        )))
+        self.command.run(args)
     }
 }
 
@@ -400,8 +319,6 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::{ExitStatus, Output};
 
     #[test]
     fn graphql_string_escaping_handles_quotes_and_backslashes() {
@@ -423,27 +340,9 @@ mod tests {
     }
 
     #[test]
-    fn command_error_prefers_stderr_then_stdout_then_status() {
-        assert_eq!(command_error(&output(b"details", b"ignored")), "details");
-        assert_eq!(
-            command_error(&output(b"", b"stdout details")),
-            "stdout details"
-        );
-        assert!(command_error(&output(b"", b"")).contains("command exited with"));
-    }
-
-    #[test]
     fn splits_repo_names() {
         assert_eq!(split_repo("owner/name").unwrap(), ("owner", "name"));
         assert!(split_repo("owner").is_err());
         assert!(split_repo("owner/").is_err());
-    }
-
-    fn output(stderr: &[u8], stdout: &[u8]) -> Output {
-        Output {
-            status: ExitStatus::from_raw(1),
-            stdout: stdout.to_vec(),
-            stderr: stderr.to_vec(),
-        }
     }
 }

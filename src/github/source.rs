@@ -3,9 +3,13 @@ use anyhow::Result;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MockErrorMode {
+    /// Simulates GitHub returning a 5xx-style outage response.
     GitHubDown,
+    /// Simulates a `gh` command exceeding the configured timeout.
     Timeout,
+    /// Simulates a non-classified `gh` command failure.
     Generic,
+    /// Simulates `gh` requiring authentication.
     Auth,
 }
 
