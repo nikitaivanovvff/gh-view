@@ -2,6 +2,9 @@ use super::theme;
 use crate::model::{PullRequest, ReviewerState};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const STALE_DAYS: i64 = 7;
 
 pub(super) fn rule_line(width: usize) -> Line<'static> {
     Line::from(Span::styled("━".repeat(width.max(1)), theme::rule()))
@@ -108,8 +111,41 @@ pub(super) fn age_label(updated_at: &str) -> String {
     }
 }
 
+pub(super) fn is_stale(updated_at: &str) -> bool {
+    let Some(updated_days) = date_days(updated_at) else {
+        return false;
+    };
+    let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    let today_days = (elapsed.as_secs() / 86_400) as i64;
+
+    today_days.saturating_sub(updated_days) >= STALE_DAYS
+}
+
 pub(super) fn selected_style() -> Style {
     theme::accent().add_modifier(Modifier::BOLD)
+}
+
+fn date_days(value: &str) -> Option<i64> {
+    if value.len() < 10 {
+        return None;
+    }
+
+    let year = value.get(0..4)?.parse().ok()?;
+    let month = value.get(5..7)?.parse().ok()?;
+    let day = value.get(8..10)?.parse().ok()?;
+    Some(days_from_civil(year, month, day))
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 #[cfg(test)]
@@ -143,6 +179,13 @@ mod tests {
         assert_eq!(age_label("2026-06-30T10:00:00Z"), "today");
         assert_eq!(age_label("2026-07-01T10:00:00Z"), "07-01");
         assert_eq!(age_label("bad"), "—");
+    }
+
+    #[test]
+    fn parses_dates_as_days_since_unix_epoch() {
+        assert_eq!(date_days("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(date_days("1970-01-02T00:00:00Z"), Some(1));
+        assert_eq!(date_days("bad"), None);
     }
 
     #[test]

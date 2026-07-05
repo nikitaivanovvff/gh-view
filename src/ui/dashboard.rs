@@ -1,5 +1,5 @@
 use super::text::{
-    age_label, ci_style, ci_text, loading_dots, pr_status, reviewer_style, rule_line,
+    age_label, ci_style, ci_text, is_stale, loading_dots, pr_status, reviewer_style, rule_line,
     selected_style, status_style, truncate,
 };
 use super::theme;
@@ -219,10 +219,17 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
     let status = pr_status(pr);
     let title = format!("#{} {}", pr.number, pr.title);
     let age = age_label(&pr.updated_at);
+    let stale = is_stale(&pr.updated_at);
+    let age_text = if stale { format!("!{age}") } else { age };
+    let age_style = if stale {
+        theme::warning().add_modifier(Modifier::BOLD)
+    } else {
+        theme::muted()
+    };
     let ci_text = ci_text(pr.check_status.as_deref());
     let status_width = 17;
     let indent = "    ";
-    let right_width = 11;
+    let right_width = 12;
     let fixed_left_width = 2 + indent.len() + 2 + status_width + 1;
     let available_title_width = width.saturating_sub(fixed_left_width + right_width).max(1);
     let title = truncate(&title, available_title_width);
@@ -246,7 +253,7 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
             }),
         ),
         Span::raw(" ".repeat(padding)),
-        Span::styled(format!("{age:>5}"), theme::muted()),
+        Span::styled(format!("{age_text:>6}"), age_style),
         Span::raw("   "),
         Span::styled(ci_text, ci_style(pr.check_status.as_deref())),
     ])
@@ -352,6 +359,14 @@ mod tests {
         assert!(line.contains("@alice"));
         assert!(line.contains("@bob"));
         assert!(line.contains("@carol"));
+    }
+
+    #[test]
+    fn pr_line_marks_stale_pr_age() {
+        let mut pr = pr();
+        pr.updated_at = "1970-01-01T00:00:00Z".to_owned();
+
+        assert!(pr_line(false, &pr, 80).to_string().contains("!01-01"));
     }
 
     #[test]
