@@ -73,9 +73,10 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 ));
             }
             Row::Pr(pr) => {
-                lines.push(pr_line(index == app.dashboard.selected, pr, width));
-                lines.push(branch_line(pr));
-                lines.push(reviewers_line(pr));
+                let selected = index == app.dashboard.selected;
+                lines.push(pr_line(selected, pr, width));
+                lines.push(branch_line(selected, pr));
+                lines.push(reviewers_line(selected, pr));
             }
             Row::Message(message) => {
                 lines.push(message_line(index == app.dashboard.selected, message));
@@ -369,7 +370,14 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
         Span::raw(indent),
         Span::styled(dot, selected_style()),
         Span::raw(" "),
-        Span::styled(format!("{status:<status_width$}"), status_style(&status)),
+        Span::styled(
+            format!("{status:<status_width$}"),
+            status_style(&status).add_modifier(if selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
+        ),
         Span::raw(" "),
         Span::styled(
             title,
@@ -386,26 +394,40 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
     ])
 }
 
-pub(super) fn branch_line(pr: &PullRequest) -> Line<'static> {
+pub(super) fn branch_line(selected: bool, pr: &PullRequest) -> Line<'static> {
+    let gutter = if selected { "│" } else { " " };
     if pr.head_ref.is_empty() {
-        return Line::from(vec![Span::raw("        ")]);
+        return Line::from(vec![
+            Span::styled(gutter, selected_style()),
+            Span::raw("       "),
+        ]);
     }
 
     Line::from(vec![
-        Span::raw("        "),
-        Span::styled(branch_label(&pr.head_ref), theme::branch()),
+        Span::styled(gutter, selected_style()),
+        Span::raw("       "),
+        Span::styled(
+            branch_label(&pr.head_ref),
+            theme::branch().add_modifier(if selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
+        ),
     ])
 }
 
-pub(super) fn reviewers_line(pr: &PullRequest) -> Line<'static> {
+pub(super) fn reviewers_line(selected: bool, pr: &PullRequest) -> Line<'static> {
+    let gutter = if selected { "│" } else { " " };
     if pr.reviewers.is_empty() {
         return Line::from(vec![
-            Span::raw("        "),
+            Span::styled(gutter, selected_style()),
+            Span::raw("       "),
             Span::styled("no reviewers", theme::muted()),
         ]);
     }
 
-    let mut spans = vec![Span::raw("        ")];
+    let mut spans = vec![Span::styled(gutter, selected_style()), Span::raw("       ")];
     for (index, reviewer) in pr.reviewers.iter().enumerate() {
         if index > 0 {
             spans.push(Span::raw("  "));
@@ -492,7 +514,7 @@ mod tests {
             },
         ];
 
-        let line = reviewers_line(&pr).to_string();
+        let line = reviewers_line(false, &pr).to_string();
 
         assert!(line.contains("@alice"));
         assert!(line.contains("@bob"));
