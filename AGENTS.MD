@@ -49,6 +49,7 @@ Use `--mock` for development/demo runs that should not call `gh`. Live runs must
 - `src/model/`: domain models for dashboards, PRs, repository groups, reviewers, checks, comments, discussion items, and code context. Keep GitHub/Ratatui details out of domain models.
 - `src/github/`: GitHub data-source trait, live `gh` client, mock client, command execution, error classification, GraphQL/JSON types, and response parsing. Live code must shell out to user-configured `gh`; do not manage tokens.
 - `src/github/gh/types.rs`: JSON/GraphQL response DTOs and conversion into domain models. Keep parsing tests here.
+- `src/github/source_context.rs`: source-file context windowing and PR patch application for review-thread code context. Keep hunk/patch parsing tests here.
 - `src/ui/`: Ratatui terminal setup, render loop, input handling, dashboard rendering, detail rendering, theme, and text helpers. Keep network/GitHub calls out of rendering code.
 
 Important data flow:
@@ -72,6 +73,7 @@ Important data flow:
 ## Coding guidelines
 
 - Keep modules small and focused.
+- Prefer small, logically independent Rust files with one clear responsibility. Split parsing, rendering helpers, state transitions, and transport concerns when a file starts mixing responsibilities.
 - Prefer explicit domain models for PRs, repositories, reviewers, checks, and comments.
 - Keep GitHub CLI execution isolated behind `src/github/`.
 - Keep dashboard refreshes bulk-oriented. Prefer a single GraphQL request for dashboard-wide data, and avoid per-PR `gh` calls in list views.

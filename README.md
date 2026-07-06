@@ -99,8 +99,6 @@ gh_timeout_seconds = 30
 | `j` / `↓` | Scroll focused pane down |
 | `k` / `↑` | Scroll focused pane up |
 | `tab` | Switch focused pane |
-| `d` | Focus description |
-| `D` | Focus discussion |
 | `n` / `→` | Next discussion item |
 | `p` / `←` | Previous discussion item |
 | `b` | Open PR in browser |

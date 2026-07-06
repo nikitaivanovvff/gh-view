@@ -16,6 +16,14 @@ pub(super) fn rule() -> Style {
     Style::default().fg(Color::Rgb(48, 45, 57))
 }
 
+pub(super) fn focus_rule() -> Style {
+    Style::default().fg(Color::Rgb(116, 111, 132))
+}
+
+pub(super) fn selection() -> Style {
+    Style::default().bg(Color::Rgb(31, 29, 38))
+}
+
 pub(super) fn success() -> Style {
     Style::default().fg(Color::Rgb(35, 209, 139))
 }

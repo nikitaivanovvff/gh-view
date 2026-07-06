@@ -5,6 +5,7 @@ use super::text::{
 use super::theme;
 use crate::app::{App, DetailPane, DetailStatus, DiscussionStatus};
 use crate::model::{CodeLineKind, DiscussionItem, DiscussionKind};
+use crate::ui::footer::{FooterItem, footer_lines};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -85,28 +86,17 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     render_discussion(frame, chunks[1], app);
 
-    let footer = vec![
-        rule_line(width),
-        Line::from(vec![
-            Span::styled("j/k", theme::muted_key()),
-            Span::styled(
-                format!(" scroll {}   ", active_pane_label(app)),
-                theme::muted(),
-            ),
-            Span::styled("tab", theme::muted_key()),
-            Span::styled(" switch focus   ", theme::muted()),
-            Span::styled("d/D", theme::muted_key()),
-            Span::styled(" focus panes   ", theme::muted()),
-            Span::styled("n/p", theme::muted_key()),
-            Span::styled(" discussion   ", theme::muted()),
-            Span::styled("esc/q", theme::muted_key()),
-            Span::styled(" back   ", theme::muted()),
-            Span::styled("b", theme::muted_key()),
-            Span::styled(" browser   ", theme::muted()),
-            Span::styled("r", theme::muted_key()),
-            Span::styled(" refresh detail", theme::muted()),
-        ]),
-    ];
+    let footer = footer_lines(
+        width,
+        vec![
+            FooterItem::new("j/k", format!("scroll {}", active_pane_label(app))),
+            FooterItem::new("tab", "switch focus"),
+            FooterItem::new("n/p", "discussion"),
+            FooterItem::new("esc/q", "back"),
+            FooterItem::new("b", "open in browser"),
+            FooterItem::new("r", "refresh detail"),
+        ],
+    );
     frame.render_widget(Paragraph::new(footer), chunks[2]);
 }
 
@@ -291,7 +281,7 @@ fn status_line(app: &App) -> Option<Line<'static>> {
 
 fn focus_rule_line(width: usize, focused: bool) -> Line<'static> {
     if focused {
-        Line::from(Span::styled("─".repeat(width), theme::accent()))
+        Line::from(Span::styled("─".repeat(width), theme::focus_rule()))
     } else {
         rule_line(width)
     }
@@ -299,7 +289,7 @@ fn focus_rule_line(width: usize, focused: bool) -> Line<'static> {
 
 fn section_label(label: &'static str, focused: bool) -> Line<'static> {
     let style = if focused {
-        theme::accent().add_modifier(Modifier::BOLD)
+        theme::normal().add_modifier(Modifier::BOLD)
     } else {
         theme::muted().add_modifier(Modifier::BOLD)
     };
@@ -308,7 +298,7 @@ fn section_label(label: &'static str, focused: bool) -> Line<'static> {
 
 fn vertical_rule_lines(height: usize, focused: bool) -> Vec<Line<'static>> {
     let style = if focused {
-        theme::accent()
+        theme::focus_rule()
     } else {
         theme::rule()
     };
@@ -340,7 +330,7 @@ fn discussion_lines(
         Span::styled(
             "DISCUSSION",
             if focused {
-                theme::accent().add_modifier(Modifier::BOLD)
+                theme::normal().add_modifier(Modifier::BOLD)
             } else {
                 theme::muted().add_modifier(Modifier::BOLD)
             },
@@ -410,21 +400,30 @@ fn code_context_lines(item: &DiscussionItem, width: usize, focused: bool) -> Vec
             CodeLineKind::Context => theme::normal(),
         };
         if highlighted {
-            style = style.add_modifier(Modifier::UNDERLINED);
+            style = style.add_modifier(Modifier::BOLD);
         }
         let number = code
             .number
             .map(|line| format!("{line:>4}"))
             .unwrap_or_else(|| "    ".to_owned());
-        let gutter = if highlighted { "▸" } else { " " };
+        let gutter = if highlighted { "│" } else { " " };
         let number_style = if highlighted {
-            theme::accent().add_modifier(Modifier::BOLD)
+            theme::focus_rule().add_modifier(Modifier::BOLD)
         } else {
             theme::muted()
         };
+        let line_style = if highlighted {
+            theme::selection()
+        } else {
+            Style::default()
+        };
+        let code_text = truncate(&code.text, width.saturating_sub(9).max(1));
         lines.push(Line::from(vec![
-            Span::styled(format!("{gutter}{number} {marker} "), number_style),
-            Span::styled(truncate(&code.text, width.saturating_sub(8).max(1)), style),
+            Span::styled(
+                format!("{gutter}{number} {marker} "),
+                number_style.patch(line_style),
+            ),
+            Span::styled(code_text, style.patch(line_style)),
         ]));
     }
 
@@ -521,7 +520,7 @@ mod tests {
         let mut app = App::new(Box::new(EmptySource));
 
         assert_eq!(active_pane_label(&app), "description");
-        app.focus_discussion();
+        app.toggle_detail_pane();
         assert_eq!(active_pane_label(&app), "discussion");
     }
 

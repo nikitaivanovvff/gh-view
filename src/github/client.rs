@@ -7,9 +7,11 @@ use self::types::{
 };
 use super::{GhError, GhStatus, PullRequestSource};
 use crate::github::command::{GhCommand, command_error};
-use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
+use crate::github::source_context::source_context_lines;
+use crate::model::{CodeContextLine, DiscussionItem, PullRequest, PullRequestDetail};
 use anyhow::{Context, Result, bail};
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, de::DeserializeOwned};
+use std::collections::HashMap;
 use std::time::Duration;
 
 const SEARCH_FIELDS: &str = "repository,number,title,author,updatedAt,state,isDraft,url";
@@ -44,6 +46,12 @@ query($owner: String!, $name: String!, $number: Int!) {
 #[derive(Clone)]
 pub struct GhClient {
     command: GhCommand,
+}
+
+#[derive(Debug, Deserialize)]
+struct PullFile {
+    filename: String,
+    patch: Option<String>,
 }
 
 impl GhClient {
@@ -154,8 +162,12 @@ impl GhClient {
         let response: ReviewThreadsResponse = serde_json::from_slice(&output.stdout)
             .context("failed to parse gh review threads GraphQL output")?;
         let head_ref_oid = response.head_ref_oid().to_owned();
+        let mut file_patches: HashMap<String, Option<String>> = HashMap::new();
         let items = response.into_discussion_items_with_context(|path, line| {
-            self.file_context(owner, name, &head_ref_oid, path, line)
+            let patch = file_patches
+                .entry(path.to_owned())
+                .or_insert_with(|| self.file_patch(owner, name, pr.number, path).ok());
+            self.file_context(owner, name, &head_ref_oid, path, line, patch.as_deref())
                 .ok()
         });
         Ok(items)
@@ -168,7 +180,8 @@ impl GhClient {
         ref_oid: &str,
         path: &str,
         line: u64,
-    ) -> Result<Vec<crate::model::CodeContextLine>> {
+        patch: Option<&str>,
+    ) -> Result<Vec<CodeContextLine>> {
         let endpoint = format!("repos/{owner}/{name}/contents/{}", encode_path(path));
         let ref_field = format!("ref={ref_oid}");
         let output = self.run_gh([
@@ -189,7 +202,25 @@ impl GhClient {
         Ok(source_context_lines(
             &String::from_utf8_lossy(&output.stdout),
             line,
+            patch,
         ))
+    }
+
+    fn file_patch(&self, owner: &str, name: &str, number: u64, path: &str) -> Result<String> {
+        let endpoint = format!("repos/{owner}/{name}/pulls/{number}/files");
+        let output = self.run_gh(["api", &endpoint, "--method", "GET", "-F", "per_page=100"])?;
+
+        if !output.status.success() {
+            bail!(GhError::from_command_output(command_error(&output)));
+        }
+
+        let files: Vec<PullFile> = serde_json::from_slice(&output.stdout)
+            .context("failed to parse gh PR files JSON output")?;
+        files
+            .into_iter()
+            .find(|file| file.filename == path)
+            .and_then(|file| file.patch)
+            .context("PR file patch was not available")
     }
 }
 
@@ -352,25 +383,6 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
         .context("repository name must be in owner/name format")
 }
 
-fn source_context_lines(text: &str, highlighted_line: u64) -> Vec<crate::model::CodeContextLine> {
-    const CONTEXT_RADIUS: u64 = 10;
-
-    let start = highlighted_line.saturating_sub(CONTEXT_RADIUS).max(1);
-    let end = highlighted_line.saturating_add(CONTEXT_RADIUS);
-
-    text.lines()
-        .enumerate()
-        .filter_map(|(index, text)| {
-            let number = index as u64 + 1;
-            (number >= start && number <= end).then(|| crate::model::CodeContextLine {
-                number: Some(number),
-                kind: crate::model::CodeLineKind::Context,
-                text: text.to_owned(),
-            })
-        })
-        .collect()
-}
-
 fn encode_path(path: &str) -> String {
     path.split('/')
         .map(encode_path_segment)
@@ -418,28 +430,6 @@ mod tests {
         assert_eq!(split_repo("owner/name").unwrap(), ("owner", "name"));
         assert!(split_repo("owner").is_err());
         assert!(split_repo("owner/").is_err());
-    }
-
-    #[test]
-    fn source_context_lines_centers_around_highlighted_line() {
-        let text = (1..=100)
-            .map(|line| format!("line {line}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let lines = source_context_lines(&text, 75);
-
-        assert_eq!(lines.first().and_then(|line| line.number), Some(65));
-        assert_eq!(lines.last().and_then(|line| line.number), Some(85));
-        assert!(lines.iter().any(|line| line.number == Some(75)));
-    }
-
-    #[test]
-    fn source_context_lines_clamps_to_file_start() {
-        let lines = source_context_lines("one\ntwo\nthree", 2);
-
-        assert_eq!(lines.first().and_then(|line| line.number), Some(1));
-        assert_eq!(lines.last().and_then(|line| line.number), Some(3));
     }
 
     #[test]

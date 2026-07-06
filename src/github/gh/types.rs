@@ -414,11 +414,13 @@ impl ReviewThreadNode {
         let first = comments.next()?;
         let highlighted_line = self.line.or(self.original_line);
         let path = self.path;
+        let diff_lines = parse_diff_hunk(&first.diff_hunk);
         let lines = highlighted_line
             .filter(|_| !path.is_empty())
             .and_then(|line| load_context(&path, line))
             .filter(|lines| !lines.is_empty())
-            .unwrap_or_else(|| parse_diff_hunk(&first.diff_hunk));
+            .map(|source_lines| apply_diff_kinds(source_lines, &diff_lines))
+            .unwrap_or(diff_lines);
         let start_line = lines.iter().find_map(|line| line.number);
         let code_context = if path.is_empty() && lines.is_empty() {
             None
@@ -581,6 +583,35 @@ fn parse_diff_hunk(diff_hunk: &str) -> Vec<CodeContextLine> {
     }
 
     lines
+}
+
+fn apply_diff_kinds(
+    mut source_lines: Vec<CodeContextLine>,
+    diff_lines: &[CodeContextLine],
+) -> Vec<CodeContextLine> {
+    for source in &mut source_lines {
+        let Some(number) = source.number else {
+            continue;
+        };
+        let Some(diff) = diff_lines
+            .iter()
+            .find(|line| {
+                line.number == Some(number)
+                    && line.text == source.text
+                    && matches!(line.kind, CodeLineKind::Added | CodeLineKind::Removed)
+            })
+            .or_else(|| {
+                diff_lines.iter().find(|line| {
+                    line.number == Some(number) && matches!(line.kind, CodeLineKind::Added)
+                })
+            })
+        else {
+            continue;
+        };
+        source.kind = diff.kind.clone();
+    }
+
+    source_lines
 }
 
 fn parse_hunk_header(header: &str) -> Option<(u64, u64)> {
@@ -980,7 +1011,7 @@ mod tests {
             Some(vec![CodeContextLine {
                 number: Some(42),
                 kind: CodeLineKind::Context,
-                text: "loaded source line".to_owned(),
+                text: "new".to_owned(),
             }])
         });
         assert_eq!(items.len(), 1);
@@ -994,7 +1025,8 @@ mod tests {
         let context = items[0].code_context.as_ref().unwrap();
         assert_eq!(context.path, "src/main.rs");
         assert_eq!(context.highlighted_line, Some(42));
-        assert_eq!(context.lines[0].text, "loaded source line");
+        assert_eq!(context.lines[0].text, "new");
+        assert_eq!(context.lines[0].kind, CodeLineKind::Added);
     }
 
     #[test]

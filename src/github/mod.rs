@@ -3,6 +3,7 @@ mod command;
 mod error;
 mod mock;
 mod source;
+mod source_context;
 
 pub use client::GhClient;
 pub use error::{

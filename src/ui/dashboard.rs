@@ -5,6 +5,7 @@ use super::text::{
 use super::theme;
 use crate::app::{App, DashboardErrorLine, DashboardErrorPage, Row};
 use crate::model::PullRequest;
+use crate::ui::footer::{FooterItem, footer_lines};
 use ratatui::layout::Alignment;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Modifier;
@@ -71,21 +72,20 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
 
     frame.render_widget(Paragraph::new(lines).style(theme::normal()), chunks[0]);
-    frame.render_widget(Paragraph::new(footer_lines(app, width)), chunks[1]);
+    frame.render_widget(
+        Paragraph::new(dashboard_footer_lines(app, width)),
+        chunks[1],
+    );
 }
 
-fn footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
-    let mut footer_line = vec![
-        Span::styled("j/k", theme::muted_key()),
-        Span::styled(" move   ", theme::muted()),
-        Span::styled("enter", theme::muted_key()),
-        Span::styled(" details   ", theme::muted()),
-        Span::styled("o", theme::muted_key()),
-        Span::styled(" toggle group   ", theme::muted()),
-        Span::styled("r", theme::muted_key()),
-        Span::styled(" refresh   ", theme::muted()),
-        Span::styled("q", theme::muted_key()),
-        Span::styled(" quit", theme::muted()),
+fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let mut items = vec![
+        FooterItem::new("j/k", "move"),
+        FooterItem::new("enter", "details"),
+        FooterItem::new("b", "open in browser"),
+        FooterItem::new("o", "toggle group"),
+        FooterItem::new("r", "refresh"),
+        FooterItem::new("q", "quit"),
     ];
     if app.is_mock() {
         let mode = match app.mock_error_mode() {
@@ -95,22 +95,16 @@ fn footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             Some(crate::github::MockErrorMode::Auth) => "auth",
             None => "ok",
         };
-        footer_line.extend([
-            Span::styled("   mock ", theme::muted()),
-            Span::styled(format!("[{mode}] "), theme::accent()),
-            Span::styled("0", theme::muted_key()),
-            Span::styled(" ok ", theme::muted()),
-            Span::styled("1", theme::muted_key()),
-            Span::styled(" down ", theme::muted()),
-            Span::styled("2", theme::muted_key()),
-            Span::styled(" timeout ", theme::muted()),
-            Span::styled("3", theme::muted_key()),
-            Span::styled(" error ", theme::muted()),
-            Span::styled("4", theme::muted_key()),
-            Span::styled(" auth", theme::muted()),
+        items.extend([
+            FooterItem::new("mock", format!("[{mode}]")),
+            FooterItem::new("0", "ok"),
+            FooterItem::new("1", "down"),
+            FooterItem::new("2", "timeout"),
+            FooterItem::new("3", "error"),
+            FooterItem::new("4", "auth"),
         ]);
     }
-    vec![rule_line(width), Line::from(footer_line)]
+    footer_lines(width, items)
 }
 
 fn render_dashboard_error(frame: &mut ratatui::Frame<'_>, page: &DashboardErrorPage) {

@@ -1,5 +1,6 @@
 mod dashboard;
 mod detail;
+mod footer;
 mod input;
 mod render;
 mod terminal;
