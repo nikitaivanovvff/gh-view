@@ -1,5 +1,6 @@
 use super::Row;
 use crate::github::{GhError, is_auth_error, is_github_outage_error};
+use crate::model::PullRequest;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppStatus {
@@ -122,4 +123,18 @@ pub(super) fn github_outage_rows() -> Vec<Row<'static>> {
         Row::Message("Looks like GitHub is having a problem.".to_owned()),
         Row::Message("Check https://www.githubstatus.com/ and press r to retry.".to_owned()),
     ]
+}
+
+pub fn pull_request_status(pr: &PullRequest) -> String {
+    if pr.is_draft {
+        return "draft".to_owned();
+    }
+
+    match pr.review_decision.as_deref() {
+        Some("APPROVED") => "approved".to_owned(),
+        Some("CHANGES_REQUESTED") => "changes requested".to_owned(),
+        Some("REVIEW_REQUIRED") => "needs review".to_owned(),
+        Some("") | None => "needs review".to_owned(),
+        Some(value) => value.to_ascii_lowercase().replace('_', " "),
+    }
 }

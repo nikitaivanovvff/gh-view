@@ -11,6 +11,8 @@ pub(super) struct SearchPullRequest {
     number: u64,
     title: String,
     author: Option<User>,
+    #[serde(default)]
+    head_ref_name: String,
     review_decision: Option<String>,
     status_check_rollup: Option<Vec<CheckRun>>,
     updated_at: String,
@@ -26,6 +28,8 @@ pub(super) struct DetailPullRequest {
     number: u64,
     title: String,
     author: Option<User>,
+    #[serde(default)]
+    head_ref_name: String,
     review_decision: Option<String>,
     status_check_rollup: Option<Vec<CheckRun>>,
     updated_at: String,
@@ -36,8 +40,6 @@ pub(super) struct DetailPullRequest {
     #[serde(default)]
     state: String,
     mergeable: Option<String>,
-    #[serde(default)]
-    head_ref_name: String,
     #[serde(default)]
     base_ref_name: String,
     #[serde(default)]
@@ -109,6 +111,8 @@ struct DashboardSearchPullRequest {
     number: u64,
     title: String,
     author: Option<User>,
+    #[serde(default)]
+    head_ref_name: String,
     review_decision: Option<String>,
     updated_at: String,
     #[serde(default)]
@@ -275,6 +279,7 @@ impl From<SearchPullRequest> for PullRequest {
             number: value.number,
             title: value.title,
             author: value.author.map(|author| author.login).unwrap_or_default(),
+            head_ref: value.head_ref_name,
             url: value.url,
             updated_at: value.updated_at,
             state: value.state,
@@ -363,6 +368,7 @@ impl DashboardSearchPullRequest {
             number: self.number,
             title: self.title,
             author: self.author.map(|author| author.login).unwrap_or_default(),
+            head_ref: self.head_ref_name,
             url: self.url,
             updated_at: self.updated_at,
             state: "OPEN".to_owned(),
@@ -445,6 +451,7 @@ impl DetailPullRequest {
             number: self.number,
             title: self.title,
             author: self.author.map(|author| author.login).unwrap_or_default(),
+            head_ref: self.head_ref_name.clone(),
             url: self.url,
             updated_at: self.updated_at,
             state: self.state.clone(),
@@ -697,6 +704,7 @@ mod tests {
             author: Some(User {
                 login: "alice".to_owned(),
             }),
+            head_ref_name: "feature".to_owned(),
             review_decision: Some("APPROVED".to_owned()),
             status_check_rollup: Some(vec![CheckRun {
                 conclusion: Some("SUCCESS".to_owned()),
@@ -711,6 +719,7 @@ mod tests {
 
         assert_eq!(pr.repo, "owner/repo");
         assert_eq!(pr.author, "alice");
+        assert_eq!(pr.head_ref, "feature");
         assert_eq!(pr.state, "OPEN");
         assert_eq!(pr.check_status.as_deref(), Some("passing"));
     }
@@ -727,6 +736,7 @@ mod tests {
                     "number": 12,
                     "title": "Add feature",
                     "author": { "login": "carol" },
+                    "headRefName": "feature/add",
                     "reviewDecision": "REVIEW_REQUIRED",
                     "updatedAt": "2026-07-01T10:00:00Z",
                     "isDraft": false,
@@ -767,6 +777,7 @@ mod tests {
         let pr = &prs[0];
         assert_eq!(pr.repo, "owner/repo");
         assert_eq!(pr.author, "carol");
+        assert_eq!(pr.head_ref, "feature/add");
         assert_eq!(pr.review_decision.as_deref(), Some("REVIEW_REQUIRED"));
         assert_eq!(pr.check_status.as_deref(), Some("passing"));
         assert_eq!(pr.review_requested, vec!["alice".to_owned()]);
@@ -797,6 +808,7 @@ mod tests {
                     "number": 1,
                     "title": "Mine",
                     "author": { "login": "octocat" },
+                    "headRefName": "mine-branch",
                     "reviewDecision": null,
                     "updatedAt": "2026-07-01T10:00:00Z",
                     "isDraft": false,
@@ -813,6 +825,7 @@ mod tests {
                       "number": 2,
                       "title": "Review me",
                       "author": { "login": "alice" },
+                      "headRefName": "review-branch",
                       "reviewDecision": "REVIEW_REQUIRED",
                       "updatedAt": "2026-07-01T11:00:00Z",
                       "isDraft": false,
@@ -830,6 +843,7 @@ mod tests {
                       "number": 3,
                       "title": "Team review",
                       "author": { "login": "bob" },
+                      "headRefName": "team-branch",
                       "reviewDecision": "REVIEW_REQUIRED",
                       "updatedAt": "2026-07-01T12:00:00Z",
                       "isDraft": false,
@@ -854,8 +868,10 @@ mod tests {
 
         assert_eq!(my_prs.len(), 1);
         assert_eq!(my_prs[0].repo, "owner/mine");
+        assert_eq!(my_prs[0].head_ref, "mine-branch");
         assert_eq!(reviews.len(), 1);
         assert_eq!(reviews[0].repo, "owner/review");
+        assert_eq!(reviews[0].head_ref, "review-branch");
         assert_eq!(reviews[0].review_requested, vec!["octocat".to_owned()]);
     }
 
@@ -896,6 +912,7 @@ mod tests {
 
         assert_eq!(detail.pr.repo, "owner/repo");
         assert_eq!(detail.pr.author, "");
+        assert_eq!(detail.pr.head_ref, "feature");
         assert_eq!(detail.body, "body");
         assert_eq!(detail.discussion.len(), 1);
         assert_eq!(detail.discussion[0].author, "bob");

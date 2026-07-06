@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 
-pub(super) const SEARCH_FIELDS: &str = "repository,number,title,author,updatedAt,state,isDraft,url";
+pub(super) const SEARCH_FIELDS: &str =
+    "repository,number,title,author,headRefName,updatedAt,state,isDraft,url";
 pub(super) const DETAIL_FIELDS: &str = "number,title,author,updatedAt,isDraft,url,body,state,mergeable,headRefName,baseRefName,reviewDecision,statusCheckRollup,comments,reviews";
 pub(super) const REVIEW_THREADS_QUERY: &str = r#"
 query($owner: String!, $name: String!, $number: Int!) {
@@ -86,6 +87,7 @@ fragment DashboardPullRequestFields on PullRequest {
   reviewDecision
   updatedAt
   author { login }
+  headRefName
   reviews(last: 20) {
     nodes {
       author { login __typename }

@@ -197,6 +197,7 @@ pub enum DiscussionStatus {
 }
 
 fn placeholder_detail(pr: PullRequest) -> PullRequestDetail {
+    let head_ref = pr.head_ref.clone();
     let state = if pr.state.is_empty() {
         "unknown".to_owned()
     } else {
@@ -208,7 +209,7 @@ fn placeholder_detail(pr: PullRequest) -> PullRequestDetail {
         body: String::new(),
         state,
         mergeable: None,
-        head_ref: String::new(),
+        head_ref,
         base_ref: String::new(),
         reviews: Vec::new(),
         discussion: Vec::new(),

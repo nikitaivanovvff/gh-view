@@ -33,7 +33,7 @@ fn main() -> Result<()> {
     let config = config::Config::load()?;
 
     match cli.command.unwrap_or(Commands::Dashboard) {
-        Commands::Dashboard => ui::run(client(cli.mock, &config)),
+        Commands::Dashboard => ui::run(client(cli.mock, &config), config.nerd_fonts),
         Commands::Doctor => run_doctor(cli.mock, &config),
     }
 }

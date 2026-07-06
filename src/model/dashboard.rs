@@ -122,6 +122,7 @@ mod tests {
             number,
             title: format!("PR {number}"),
             author: "author".to_owned(),
+            head_ref: format!("feature-{number}"),
             url: format!("https://github.com/{repo}/pull/{number}"),
             updated_at: updated_at.to_owned(),
             state: "OPEN".to_owned(),

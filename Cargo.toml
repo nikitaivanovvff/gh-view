@@ -1,6 +1,6 @@
 [package]
 name = "gh-view"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 description = "A terminal view for GitHub pull requests"
 license = "MIT"
@@ -8,8 +8,10 @@ repository = "https://github.com/nikitaivanovvff/gh-view"
 
 [dependencies]
 anyhow = "1.0"
+arboard = "3.6.1"
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.29"
+nucleo-matcher = "0.3.1"
 ratatui = "0.30"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
