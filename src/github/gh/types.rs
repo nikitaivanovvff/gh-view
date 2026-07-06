@@ -1,3 +1,4 @@
+use crate::github::source_context::apply_patch_to_context;
 use crate::model::{
     CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind, DiscussionReply,
     PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
@@ -424,7 +425,7 @@ impl ReviewThreadNode {
             .filter(|_| !path.is_empty())
             .and_then(|line| load_context(&path, line))
             .filter(|lines| !lines.is_empty())
-            .map(|source_lines| apply_diff_kinds(source_lines, &diff_lines))
+            .map(|source_lines| apply_thread_hunk_if_needed(source_lines, &first.diff_hunk))
             .unwrap_or(diff_lines);
         let start_line = lines.iter().find_map(|line| line.number);
         let code_context = if path.is_empty() && lines.is_empty() {
@@ -591,33 +592,18 @@ fn parse_diff_hunk(diff_hunk: &str) -> Vec<CodeContextLine> {
     lines
 }
 
-fn apply_diff_kinds(
-    mut source_lines: Vec<CodeContextLine>,
-    diff_lines: &[CodeContextLine],
+fn apply_thread_hunk_if_needed(
+    source_lines: Vec<CodeContextLine>,
+    diff_hunk: &str,
 ) -> Vec<CodeContextLine> {
-    for source in &mut source_lines {
-        let Some(number) = source.number else {
-            continue;
-        };
-        let Some(diff) = diff_lines
-            .iter()
-            .find(|line| {
-                line.number == Some(number)
-                    && line.text == source.text
-                    && matches!(line.kind, CodeLineKind::Added | CodeLineKind::Removed)
-            })
-            .or_else(|| {
-                diff_lines.iter().find(|line| {
-                    line.number == Some(number) && matches!(line.kind, CodeLineKind::Added)
-                })
-            })
-        else {
-            continue;
-        };
-        source.kind = diff.kind.clone();
+    if source_lines
+        .iter()
+        .any(|line| line.kind != CodeLineKind::Context)
+    {
+        source_lines
+    } else {
+        apply_patch_to_context(source_lines, diff_hunk)
     }
-
-    source_lines
 }
 
 fn parse_hunk_header(header: &str) -> Option<(u64, u64)> {

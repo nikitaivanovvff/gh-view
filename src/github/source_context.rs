@@ -24,20 +24,23 @@ pub(super) fn source_context_lines(
         .collect();
 
     if let Some(patch) = patch {
-        apply_patch_kinds(&mut lines, patch);
+        lines = apply_patch_to_context(lines, patch);
     }
 
     lines
 }
 
-fn apply_patch_kinds(lines: &mut Vec<CodeContextLine>, patch: &str) {
+pub(super) fn apply_patch_to_context(
+    mut lines: Vec<CodeContextLine>,
+    patch: &str,
+) -> Vec<CodeContextLine> {
     let mut old_line = None;
     let mut new_line = None;
     let mut removed_lines = Vec::new();
 
     for raw_line in patch.lines() {
         if raw_line.starts_with("@@") {
-            flush_removed_lines(lines, new_line, &mut removed_lines);
+            flush_removed_lines(&mut lines, new_line, &mut removed_lines);
             if let Some((old_start, new_start)) = parse_patch_hunk_header(raw_line) {
                 old_line = Some(old_start);
                 new_line = Some(new_start);
@@ -50,9 +53,9 @@ fn apply_patch_kinds(lines: &mut Vec<CodeContextLine>, patch: &str) {
         };
         match prefix {
             '+' => {
-                flush_removed_lines(lines, new_line, &mut removed_lines);
+                flush_removed_lines(&mut lines, new_line, &mut removed_lines);
                 if let Some(number) = new_line {
-                    mark_line_kind(lines, number, &raw_line[1..], CodeLineKind::Added);
+                    mark_line_kind(&mut lines, number, &raw_line[1..], CodeLineKind::Added);
                 }
                 new_line = new_line.map(|line| line + 1);
             }
@@ -67,19 +70,20 @@ fn apply_patch_kinds(lines: &mut Vec<CodeContextLine>, patch: &str) {
                 old_line = old_line.map(|line| line + 1);
             }
             ' ' => {
-                flush_removed_lines(lines, new_line, &mut removed_lines);
+                flush_removed_lines(&mut lines, new_line, &mut removed_lines);
                 old_line = old_line.map(|line| line + 1);
                 new_line = new_line.map(|line| line + 1);
             }
             _ => {
-                flush_removed_lines(lines, new_line, &mut removed_lines);
+                flush_removed_lines(&mut lines, new_line, &mut removed_lines);
                 old_line = old_line.map(|line| line + 1);
                 new_line = new_line.map(|line| line + 1);
             }
         }
     }
 
-    flush_removed_lines(lines, new_line, &mut removed_lines);
+    flush_removed_lines(&mut lines, new_line, &mut removed_lines);
+    lines
 }
 
 fn flush_removed_lines(
@@ -101,6 +105,17 @@ fn flush_removed_lines(
         removed_lines.clear();
         return;
     };
+
+    removed_lines.retain(|removed| {
+        !lines.iter().any(|line| {
+            line.number == removed.number
+                && line.kind == CodeLineKind::Removed
+                && line.text == removed.text
+        })
+    });
+    if removed_lines.is_empty() {
+        return;
+    }
 
     lines.splice(index..index, removed_lines.drain(..));
 }
@@ -187,5 +202,36 @@ mod tests {
         assert_eq!(lines[1].kind, CodeLineKind::Removed);
         assert_eq!(lines[2].text, "new");
         assert_eq!(lines[2].kind, CodeLineKind::Added);
+    }
+
+    #[test]
+    fn does_not_duplicate_existing_removed_lines() {
+        let lines = vec![
+            CodeContextLine {
+                number: Some(1),
+                kind: CodeLineKind::Context,
+                text: "kept".to_owned(),
+            },
+            CodeContextLine {
+                number: Some(2),
+                kind: CodeLineKind::Removed,
+                text: "old".to_owned(),
+            },
+            CodeContextLine {
+                number: Some(2),
+                kind: CodeLineKind::Added,
+                text: "new".to_owned(),
+            },
+        ];
+
+        let lines = apply_patch_to_context(lines, "@@ -1,2 +1,2 @@\n kept\n-old\n+new");
+
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.kind == CodeLineKind::Removed)
+                .count(),
+            1
+        );
     }
 }

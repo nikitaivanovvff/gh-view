@@ -8,7 +8,7 @@ use self::types::{
 use super::{GhError, GhStatus, PullRequestSource};
 use crate::github::command::{GhCommand, command_error};
 use crate::github::source_context::source_context_lines;
-use crate::model::{CodeContextLine, DiscussionItem, PullRequest, PullRequestDetail};
+use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, de::DeserializeOwned};
 use std::collections::HashMap;
@@ -162,26 +162,22 @@ impl GhClient {
         let response: ReviewThreadsResponse = serde_json::from_slice(&output.stdout)
             .context("failed to parse gh review threads GraphQL output")?;
         let head_ref_oid = response.head_ref_oid().to_owned();
-        let mut file_patches: HashMap<String, Option<String>> = HashMap::new();
+        let file_patches = self
+            .file_patches(owner, name, pr.number)
+            .unwrap_or_default();
+        let mut file_contents: HashMap<String, Option<String>> = HashMap::new();
         let items = response.into_discussion_items_with_context(|path, line| {
-            let patch = file_patches
+            let content = file_contents
                 .entry(path.to_owned())
-                .or_insert_with(|| self.file_patch(owner, name, pr.number, path).ok());
-            self.file_context(owner, name, &head_ref_oid, path, line, patch.as_deref())
-                .ok()
+                .or_insert_with(|| self.file_content(owner, name, &head_ref_oid, path).ok());
+            content.as_deref().map(|content| {
+                source_context_lines(content, line, file_patches.get(path).map(String::as_str))
+            })
         });
         Ok(items)
     }
 
-    fn file_context(
-        &self,
-        owner: &str,
-        name: &str,
-        ref_oid: &str,
-        path: &str,
-        line: u64,
-        patch: Option<&str>,
-    ) -> Result<Vec<CodeContextLine>> {
+    fn file_content(&self, owner: &str, name: &str, ref_oid: &str, path: &str) -> Result<String> {
         let endpoint = format!("repos/{owner}/{name}/contents/{}", encode_path(path));
         let ref_field = format!("ref={ref_oid}");
         let output = self.run_gh([
@@ -199,14 +195,15 @@ impl GhClient {
             bail!(GhError::from_command_output(command_error(&output)));
         }
 
-        Ok(source_context_lines(
-            &String::from_utf8_lossy(&output.stdout),
-            line,
-            patch,
-        ))
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    fn file_patch(&self, owner: &str, name: &str, number: u64, path: &str) -> Result<String> {
+    fn file_patches(
+        &self,
+        owner: &str,
+        name: &str,
+        number: u64,
+    ) -> Result<HashMap<String, String>> {
         let endpoint = format!("repos/{owner}/{name}/pulls/{number}/files");
         let output = self.run_gh(["api", &endpoint, "--method", "GET", "-F", "per_page=100"])?;
 
@@ -216,11 +213,10 @@ impl GhClient {
 
         let files: Vec<PullFile> = serde_json::from_slice(&output.stdout)
             .context("failed to parse gh PR files JSON output")?;
-        files
+        Ok(files
             .into_iter()
-            .find(|file| file.filename == path)
-            .and_then(|file| file.patch)
-            .context("PR file patch was not available")
+            .filter_map(|file| Some((file.filename, file.patch?)))
+            .collect())
     }
 }
 
