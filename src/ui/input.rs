@@ -182,7 +182,7 @@ mod tests {
         app.refresh();
 
         assert_continue_changed(key(KeyCode::Char('j'), &mut app), true);
-        assert_eq!(app.selected, 1);
+        assert_eq!(app.dashboard.selected, 1);
 
         assert_continue_changed(key(KeyCode::Char('o'), &mut app), true);
         assert!(matches!(
@@ -191,7 +191,7 @@ mod tests {
         ));
 
         assert_continue_changed(key(KeyCode::Char('k'), &mut app), true);
-        assert_eq!(app.selected, 0);
+        assert_eq!(app.dashboard.selected, 0);
         assert!(matches!(
             key(KeyCode::Char('q'), &mut app),
             InputOutcome::Quit
@@ -215,12 +215,12 @@ mod tests {
     #[test]
     fn mock_error_keys_replace_active_mock_load() {
         let mut app = App::new(Box::new(MockGhClient::new()));
-        app.dashboard_loading = true;
+        app.dashboard.loading = true;
 
         assert_continue_changed(key(KeyCode::Char('1'), &mut app), true);
 
         assert_eq!(app.mock_error_mode(), Some(MockErrorMode::GitHubDown));
-        assert!(app.dashboard_loading);
+        assert!(app.dashboard.loading);
     }
 
     #[test]

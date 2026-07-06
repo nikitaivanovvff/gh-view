@@ -1,68 +1,58 @@
+mod dashboard;
 mod detail;
 mod rows;
 mod status;
 
 use crate::github::{MockErrorMode, PullRequestSource};
-use crate::model::{Dashboard, PullRequest};
+use crate::model::PullRequest;
+use dashboard::DashboardLoad;
+pub use dashboard::DashboardState;
 pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
-pub use rows::{DashboardSection, Row};
-use rows::{group_names, push_groups};
+#[cfg(test)]
+pub use rows::DashboardSection;
+pub use rows::Row;
+use status::classify_refresh_error;
 pub use status::{AppStatus, DashboardErrorLine, DashboardErrorPage};
-use status::{classify_refresh_error, github_outage_rows};
-use std::collections::BTreeSet;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc;
 use std::thread;
-
-type DashboardLoad = Result<(String, Vec<PullRequest>, Vec<PullRequest>), AppStatus>;
-type DashboardReceiver = Receiver<DashboardLoad>;
 
 pub struct App {
     client: Box<dyn PullRequestSource>,
-    dashboard: Dashboard,
-    collapsed_groups: BTreeSet<String>,
-    pub current_user: Option<String>,
-    pub selected: usize,
+    pub dashboard: DashboardState,
     pub status: AppStatus,
     pub view: AppView,
     pub detail: DetailState,
-    pub dashboard_loading: bool,
     pub loading_frame: usize,
-    dashboard_rx: Option<DashboardReceiver>,
 }
 
 impl App {
     pub fn new(client: Box<dyn PullRequestSource>) -> Self {
         Self {
             client,
-            dashboard: Dashboard::default(),
-            collapsed_groups: BTreeSet::new(),
-            current_user: None,
-            selected: 0,
+            dashboard: DashboardState::new(),
             status: AppStatus::Ready,
             view: AppView::Dashboard,
             detail: DetailState::new(),
-            dashboard_loading: false,
             loading_frame: 0,
-            dashboard_rx: None,
         }
     }
 
     #[cfg(test)]
     pub fn refresh(&mut self) {
-        let result = refresh_dashboard(self.client.clone(), self.current_user.clone());
+        let result = refresh_dashboard(self.client.clone(), self.dashboard.current_user.clone());
         self.apply_refresh_result(result.map_err(classify_refresh_error));
     }
 
     pub fn refresh_async(&mut self) {
-        if self.dashboard_loading {
+        if self.dashboard.loading {
             return;
         }
 
         let client = self.client.clone();
-        let current_user = self.current_user.clone();
+        let current_user = self.dashboard.current_user.clone();
         let (tx, rx) = mpsc::channel();
-        self.dashboard_rx = Some(rx);
-        self.dashboard_loading = true;
+        self.dashboard.rx = Some(rx);
+        self.dashboard.loading = true;
         self.loading_frame = 0;
 
         thread::spawn(move || {
@@ -72,95 +62,44 @@ impl App {
     }
 
     fn apply_refresh_result(&mut self, result: DashboardLoad) {
-        self.dashboard_loading = false;
-        self.dashboard_rx = None;
+        self.dashboard.loading = false;
+        self.dashboard.rx = None;
         match result {
             Ok((user, my_prs, reviews)) => {
-                self.current_user = Some(user);
-                self.dashboard = Dashboard::from_prs(my_prs, reviews);
-                let valid_groups = group_names(&self.dashboard);
-                self.collapsed_groups = self
-                    .collapsed_groups
-                    .intersection(&valid_groups)
-                    .cloned()
-                    .collect();
+                self.dashboard.apply_success(user, my_prs, reviews);
                 self.status = AppStatus::Ready;
                 self.clamp_selection();
             }
             Err(status) => {
                 self.status = status;
-                self.dashboard = Dashboard::default();
+                self.dashboard.reset_after_error();
             }
         }
     }
 
     pub fn rows(&self) -> Vec<Row<'_>> {
-        match &self.status {
-            AppStatus::MissingGh => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
-            AppStatus::Unauthenticated(_) => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
-            AppStatus::GitHubOutage(_) if self.dashboard.is_empty() => return github_outage_rows(),
-            AppStatus::Timeout(_) if self.dashboard.is_empty() => return vec![
-                Row::Message("GitHub is taking too long to answer.".to_owned()),
-                Row::Message("The last gh command was stopped after 30s. Press r to retry.".to_owned()),
-            ],
-            AppStatus::Error(_) if self.dashboard.is_empty() => return vec![Row::Message("Could not load pull requests. Press r to retry.".to_owned())],
-            _ => {}
-        }
-
-        let mut rows = Vec::new();
-        rows.push(Row::Section("My PRs"));
-        push_groups(
-            &mut rows,
-            DashboardSection::MyPrs,
-            &self.dashboard.my_prs,
-            &self.collapsed_groups,
-        );
-        rows.push(Row::Section("Awaiting Review"));
-        push_groups(
-            &mut rows,
-            DashboardSection::AwaitingReview,
-            &self.dashboard.awaiting_review,
-            &self.collapsed_groups,
-        );
-
-        if self.dashboard.is_empty() {
-            rows.push(Row::Message(
-                "No open PRs found. Press r to refresh.".to_owned(),
-            ));
-        }
-
-        rows
+        self.dashboard.rows(&self.status)
     }
 
     pub fn clamp_selection(&mut self) {
-        self.selected = self.selected.min(self.rows().len().saturating_sub(1));
+        self.dashboard.clamp_selection(&self.status);
     }
 
     pub fn next(&mut self) {
-        let len = self.rows().len();
-        if len > 0 {
-            self.selected = (self.selected + 1).min(len - 1);
-        }
+        self.dashboard.next(&self.status);
     }
 
     pub fn previous(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        self.dashboard.previous();
     }
 
     pub fn toggle_selected_group(&mut self) {
-        let rows = self.rows();
-        let Some(repo) = rows.get(self.selected).and_then(Row::group_key) else {
-            return;
-        };
-
-        if !self.collapsed_groups.insert(repo.clone()) {
-            self.collapsed_groups.remove(&repo);
-        }
+        self.dashboard.toggle_selected_group(&self.status);
     }
 
     pub fn open_selected_detail(&mut self) {
         let rows = self.rows();
-        let Some(pr) = rows.get(self.selected).and_then(Row::pr).cloned() else {
+        let Some(pr) = rows.get(self.dashboard.selected).and_then(Row::pr).cloned() else {
             return;
         };
 
@@ -184,7 +123,7 @@ impl App {
     }
 
     fn poll_dashboard_load(&mut self) -> bool {
-        let Some(rx) = &self.dashboard_rx else {
+        let Some(rx) = &self.dashboard.rx else {
             return false;
         };
 
@@ -285,7 +224,7 @@ impl App {
         let url = match self.view {
             AppView::Dashboard => self
                 .rows()
-                .get(self.selected)
+                .get(self.dashboard.selected)
                 .and_then(Row::pr_url)
                 .map(str::to_owned),
             AppView::Detail => self
@@ -305,7 +244,7 @@ impl App {
     }
 
     pub fn show_dashboard_loading_screen(&self) -> bool {
-        self.dashboard_loading && self.dashboard.is_empty()
+        self.dashboard.show_loading_screen()
     }
 
     pub fn detail_is_loading(&self) -> bool {
@@ -313,7 +252,7 @@ impl App {
     }
 
     pub fn is_loading(&self) -> bool {
-        self.dashboard_loading || self.detail_is_loading()
+        self.dashboard.loading || self.detail_is_loading()
     }
 
     pub fn advance_loading_frame(&mut self) {
@@ -323,7 +262,7 @@ impl App {
     }
 
     pub fn dashboard_error_page(&self) -> Option<DashboardErrorPage> {
-        status::dashboard_error_page(&self.status, self.dashboard.is_empty())
+        status::dashboard_error_page(&self.status, self.dashboard.data.is_empty())
     }
 
     pub fn is_mock(&self) -> bool {
@@ -339,8 +278,8 @@ impl App {
             return;
         }
         self.client.set_mock_error_mode(mode);
-        self.dashboard_loading = false;
-        self.dashboard_rx = None;
+        self.dashboard.loading = false;
+        self.dashboard.rx = None;
         self.refresh_async();
     }
 }
@@ -447,7 +386,7 @@ mod tests {
         app.refresh();
         app.refresh();
 
-        assert_eq!(app.current_user.as_deref(), Some("octocat"));
+        assert_eq!(app.dashboard.current_user.as_deref(), Some("octocat"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(matches!(app.status, AppStatus::Ready));
         assert!(
@@ -528,19 +467,19 @@ mod tests {
     fn dashboard_loading_screen_is_for_empty_dashboard_loads() {
         let mut app = App::new(Box::new(TestSource::ok()));
 
-        app.dashboard_loading = true;
+        app.dashboard.loading = true;
         assert!(app.show_dashboard_loading_screen());
         assert!(matches!(
             app.rows().last(),
             Some(Row::Message(message)) if !message.contains("Loading")
         ));
 
-        app.current_user = Some("octocat".to_owned());
+        app.dashboard.current_user = Some("octocat".to_owned());
         assert!(app.show_dashboard_loading_screen());
 
-        app.dashboard_loading = false;
+        app.dashboard.loading = false;
         app.refresh();
-        app.dashboard_loading = true;
+        app.dashboard.loading = true;
         assert!(!app.show_dashboard_loading_screen());
     }
 
@@ -551,7 +490,7 @@ mod tests {
         app.advance_loading_frame();
         assert_eq!(app.loading_frame, 0);
 
-        app.dashboard_loading = true;
+        app.dashboard.loading = true;
         app.advance_loading_frame();
         assert_eq!(app.loading_frame, 1);
     }
@@ -593,7 +532,7 @@ mod tests {
 
         let expanded_count = app.rows().len();
         app.next();
-        assert_eq!(app.selected, 1);
+        assert_eq!(app.dashboard.selected, 1);
         app.toggle_selected_group();
 
         assert!(app.rows().len() < expanded_count);
@@ -602,7 +541,7 @@ mod tests {
             Some(Row::Group { open: false, .. })
         ));
         app.previous();
-        assert_eq!(app.selected, 0);
+        assert_eq!(app.dashboard.selected, 0);
     }
 
     #[test]
