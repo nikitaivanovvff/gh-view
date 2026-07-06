@@ -1,4 +1,5 @@
 use super::rows::{DashboardSection, Row, group_names, push_groups};
+use super::search::{DashboardSearchMatch, DashboardSearchState, search_matches};
 use super::status::{AppStatus, github_outage_rows};
 use crate::model::{Dashboard, PullRequest};
 use std::collections::BTreeSet;
@@ -11,6 +12,7 @@ pub struct DashboardState {
     pub data: Dashboard,
     pub current_user: Option<String>,
     pub selected: usize,
+    pub(super) search: Option<DashboardSearchState>,
     pub loading: bool,
     collapsed_groups: BTreeSet<String>,
     pub(super) rx: Option<DashboardReceiver>,
@@ -22,6 +24,7 @@ impl DashboardState {
             data: Dashboard::default(),
             current_user: None,
             selected: 0,
+            search: None,
             loading: false,
             collapsed_groups: BTreeSet::new(),
             rx: None,
@@ -74,6 +77,7 @@ impl DashboardState {
     ) {
         self.current_user = Some(user);
         self.data = Dashboard::from_prs(my_prs, reviews);
+        self.clamp_search_selection();
         let valid_groups = group_names(&self.data);
         self.collapsed_groups = self
             .collapsed_groups
@@ -84,6 +88,7 @@ impl DashboardState {
 
     pub fn reset_after_error(&mut self) {
         self.data = Dashboard::default();
+        self.close_search();
     }
 
     pub fn clamp_selection(&mut self, status: &AppStatus) {
@@ -114,5 +119,73 @@ impl DashboardState {
 
     pub fn show_loading_screen(&self) -> bool {
         self.loading && self.data.is_empty()
+    }
+
+    pub fn open_search(&mut self) {
+        self.search = Some(DashboardSearchState::default());
+    }
+
+    pub fn close_search(&mut self) {
+        self.search = None;
+    }
+
+    pub fn push_search_char(&mut self, ch: char) {
+        let Some(search) = &mut self.search else {
+            return;
+        };
+
+        search.query.push(ch);
+        search.selected = 0;
+    }
+
+    pub fn pop_search_char(&mut self) {
+        let Some(search) = &mut self.search else {
+            return;
+        };
+
+        search.query.pop();
+        search.selected = 0;
+    }
+
+    pub fn next_search_match(&mut self) {
+        let len = self.search_matches().len();
+        let Some(search) = &mut self.search else {
+            return;
+        };
+
+        if len > 0 {
+            search.selected = (search.selected + 1).min(len - 1);
+        }
+    }
+
+    pub fn previous_search_match(&mut self) {
+        let Some(search) = &mut self.search else {
+            return;
+        };
+
+        search.selected = search.selected.saturating_sub(1);
+    }
+
+    pub fn search_matches(&self) -> Vec<DashboardSearchMatch> {
+        let Some(search) = &self.search else {
+            return Vec::new();
+        };
+
+        search_matches(&self.data, &search.query)
+    }
+
+    pub fn selected_search_match(&mut self) -> Option<DashboardSearchMatch> {
+        self.clamp_search_selection();
+        let selected = self.search.as_ref()?.selected;
+        self.search_matches().get(selected).cloned()
+    }
+
+    fn clamp_search_selection(&mut self) {
+        let len = self.search_matches().len();
+        let Some(search) = &mut self.search else {
+            return;
+        };
+
+        search.selected = search.selected.min(len.saturating_sub(1));
     }
 }

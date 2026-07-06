@@ -12,6 +12,7 @@ pub(super) struct Palette {
     pub warning: Color,
     pub danger: Color,
     pub reviewer: Color,
+    pub branch: Color,
     pub muted_key: Color,
 }
 
@@ -27,5 +28,6 @@ pub(super) const DEFAULT: Palette = Palette {
     warning: Color::Rgb(220, 170, 88),
     danger: Color::Rgb(232, 93, 117),
     reviewer: Color::Rgb(64, 196, 150),
+    branch: Color::Rgb(107, 203, 191),
     muted_key: Color::Rgb(116, 111, 132),
 };

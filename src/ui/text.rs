@@ -1,4 +1,5 @@
 use super::theme;
+use crate::app::pull_request_status;
 use crate::model::{PullRequest, ReviewerState};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -16,17 +17,7 @@ pub(super) fn loading_dots(frame: usize) -> &'static str {
 }
 
 pub(super) fn pr_status(pr: &PullRequest) -> String {
-    if pr.is_draft {
-        return "draft".to_owned();
-    }
-
-    match pr.review_decision.as_deref() {
-        Some("APPROVED") => "approved".to_owned(),
-        Some("CHANGES_REQUESTED") => "changes requested".to_owned(),
-        Some("REVIEW_REQUIRED") => "needs review".to_owned(),
-        Some("") | None => "needs review".to_owned(),
-        Some(value) => value.to_ascii_lowercase().replace('_', " "),
-    }
+    pull_request_status(pr)
 }
 
 pub(super) fn reviewer_style(state: ReviewerState) -> Style {
@@ -208,6 +199,7 @@ mod tests {
             number: 1,
             title: "Title".to_owned(),
             author: "author".to_owned(),
+            head_ref: "feature-title".to_owned(),
             url: "https://example.test".to_owned(),
             updated_at: "2026-07-01T10:00:00Z".to_owned(),
             state: "OPEN".to_owned(),

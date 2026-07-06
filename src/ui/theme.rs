@@ -45,6 +45,10 @@ pub(super) fn reviewer() -> Style {
     Style::default().fg(DEFAULT.reviewer)
 }
 
+pub(super) fn branch() -> Style {
+    Style::default().fg(DEFAULT.branch)
+}
+
 pub(super) fn muted_key() -> Style {
     Style::default().fg(DEFAULT.muted_key)
 }

@@ -1,6 +1,7 @@
 mod dashboard;
 mod detail;
 mod rows;
+mod search;
 mod status;
 
 use crate::github::{MockErrorMode, PullRequestSource};
@@ -11,10 +12,14 @@ pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
 #[cfg(test)]
 pub use rows::DashboardSection;
 pub use rows::Row;
+pub use search::DashboardSearchMatch;
 use status::classify_refresh_error;
-pub use status::{AppStatus, DashboardErrorLine, DashboardErrorPage};
+pub use status::{AppStatus, DashboardErrorLine, DashboardErrorPage, pull_request_status};
 use std::sync::mpsc;
 use std::thread;
+use std::time::{Duration, Instant};
+
+const COPY_NOTICE_DURATION: Duration = Duration::from_secs(5);
 
 pub struct App {
     client: Box<dyn PullRequestSource>,
@@ -23,6 +28,12 @@ pub struct App {
     pub view: AppView,
     pub detail: DetailState,
     pub loading_frame: usize,
+    copy_notice: Option<CopyNotice>,
+}
+
+struct CopyNotice {
+    message: String,
+    expires_at: Instant,
 }
 
 impl App {
@@ -34,6 +45,7 @@ impl App {
             view: AppView::Dashboard,
             detail: DetailState::new(),
             loading_frame: 0,
+            copy_notice: None,
         }
     }
 
@@ -97,6 +109,58 @@ impl App {
         self.dashboard.toggle_selected_group(&self.status);
     }
 
+    pub fn open_search(&mut self) {
+        self.dashboard.open_search();
+    }
+
+    pub fn close_search(&mut self) {
+        self.dashboard.close_search();
+    }
+
+    pub fn search_is_open(&self) -> bool {
+        self.dashboard.search.is_some()
+    }
+
+    pub fn search_query(&self) -> Option<&str> {
+        self.dashboard
+            .search
+            .as_ref()
+            .map(|search| search.query.as_str())
+    }
+
+    pub fn selected_search_index(&self) -> Option<usize> {
+        self.dashboard.search.as_ref().map(|search| search.selected)
+    }
+
+    pub fn push_search_char(&mut self, ch: char) {
+        self.dashboard.push_search_char(ch);
+    }
+
+    pub fn pop_search_char(&mut self) {
+        self.dashboard.pop_search_char();
+    }
+
+    pub fn next_search_match(&mut self) {
+        self.dashboard.next_search_match();
+    }
+
+    pub fn previous_search_match(&mut self) {
+        self.dashboard.previous_search_match();
+    }
+
+    pub fn search_matches(&self) -> Vec<DashboardSearchMatch> {
+        self.dashboard.search_matches()
+    }
+
+    pub fn open_selected_search_match(&mut self) {
+        let Some(pr) = self.dashboard.selected_search_match().map(|item| item.pr) else {
+            return;
+        };
+
+        self.dashboard.close_search();
+        self.open_detail_for_pr(pr);
+    }
+
     pub fn open_selected_detail(&mut self) {
         let rows = self.rows();
         let Some(pr) = rows.get(self.dashboard.selected).and_then(Row::pr).cloned() else {
@@ -104,6 +168,44 @@ impl App {
         };
 
         self.open_detail_for_pr(pr);
+    }
+
+    pub fn copy_selected_branch(&mut self) {
+        let rows = self.rows();
+        let Some(branch) = rows
+            .get(self.dashboard.selected)
+            .and_then(Row::pr)
+            .map(|pr| pr.head_ref.clone())
+            .filter(|branch| !branch.is_empty())
+        else {
+            return;
+        };
+
+        match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(branch.clone()))
+        {
+            Ok(()) => {
+                self.copy_notice = Some(CopyNotice {
+                    message: format!("copied branch {branch}"),
+                    expires_at: Instant::now() + COPY_NOTICE_DURATION,
+                });
+            }
+            Err(error) => {
+                self.status = AppStatus::Error(format!("failed to copy branch: {error}"));
+            }
+        }
+    }
+
+    pub fn status_message(&self) -> Option<&str> {
+        match &self.status {
+            AppStatus::Error(message) => Some(message),
+            _ => None,
+        }
+    }
+
+    pub fn copy_notice_message(&self) -> Option<&str> {
+        self.copy_notice
+            .as_ref()
+            .map(|notice| notice.message.as_str())
     }
 
     fn open_detail_for_pr(&mut self, pr: PullRequest) {
@@ -119,7 +221,21 @@ impl App {
         changed |= self.poll_dashboard_load();
         changed |= self.poll_detail_load();
         changed |= self.poll_discussion_load();
+        changed |= self.poll_copy_notice();
         changed
+    }
+
+    fn poll_copy_notice(&mut self) -> bool {
+        let Some(notice) = &self.copy_notice else {
+            return false;
+        };
+
+        if Instant::now() < notice.expires_at {
+            return false;
+        }
+
+        self.copy_notice = None;
+        true
     }
 
     fn poll_dashboard_load(&mut self) -> bool {
@@ -545,6 +661,57 @@ mod tests {
     }
 
     #[test]
+    fn search_open_close_and_query_edit_preserve_dashboard_selection() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+        app.refresh();
+        app.next();
+
+        app.open_search();
+        app.push_search_char('r');
+        app.push_search_char('e');
+        app.pop_search_char();
+        app.close_search();
+
+        assert!(app.dashboard.search.is_none());
+        assert_eq!(app.dashboard.selected, 1);
+    }
+
+    #[test]
+    fn search_returns_loaded_prs_even_when_group_is_collapsed() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+        app.refresh();
+        app.next();
+        app.toggle_selected_group();
+
+        assert!(
+            !app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+        );
+
+        app.open_search();
+        app.push_search_char('1');
+
+        assert!(app.search_matches().iter().any(|item| item.pr.number == 1));
+    }
+
+    #[test]
+    fn search_selection_clamps_and_opening_match_clears_search() {
+        let mut app = App::new(Box::new(TestSource::ok()));
+        app.refresh();
+        app.open_search();
+        app.next_search_match();
+        app.push_search_char('2');
+
+        assert_eq!(app.dashboard.search.as_ref().unwrap().selected, 0);
+        app.open_selected_search_match();
+
+        assert_eq!(app.view, AppView::Detail);
+        assert!(app.dashboard.search.is_none());
+        assert_eq!(app.detail.current.as_ref().unwrap().pr.number, 2);
+    }
+
+    #[test]
     fn opening_detail_uses_placeholder_then_background_results() {
         let mut app = App::new(Box::new(TestSource::ok()));
         app.refresh();
@@ -642,6 +809,7 @@ mod tests {
             number,
             title: format!("PR {number}"),
             author: "author".to_owned(),
+            head_ref: format!("feature-{number}"),
             url: format!("https://github.com/{repo}/pull/{number}"),
             updated_at: "2026-07-01T10:00:00Z".to_owned(),
             state: "OPEN".to_owned(),

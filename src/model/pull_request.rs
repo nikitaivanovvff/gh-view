@@ -6,6 +6,7 @@ pub struct PullRequest {
     pub number: u64,
     pub title: String,
     pub author: String,
+    pub head_ref: String,
     pub url: String,
     pub updated_at: String,
     pub state: String,

@@ -1,7 +1,7 @@
 use crate::app::{App, AppView};
 use crate::github::MockErrorMode;
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 
 pub(super) enum InputOutcome {
     Continue(bool),
@@ -20,8 +20,49 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
     }
 
     let changed = match app.view {
+        AppView::Dashboard if app.search_is_open() => match key.code {
+            KeyCode::Esc => {
+                app.close_search();
+                true
+            }
+            KeyCode::Enter => {
+                app.open_selected_search_match();
+                true
+            }
+            KeyCode::Backspace => {
+                app.pop_search_char();
+                true
+            }
+            KeyCode::Down => {
+                app.next_search_match();
+                true
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.next_search_match();
+                true
+            }
+            KeyCode::Up => {
+                app.previous_search_match();
+                true
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.previous_search_match();
+                true
+            }
+            KeyCode::Char(ch)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                app.push_search_char(ch);
+                true
+            }
+            _ => false,
+        },
         AppView::Dashboard => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(InputOutcome::Quit),
+            KeyCode::Char('/') => {
+                app.open_search();
+                true
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 app.next();
                 true
@@ -44,6 +85,10 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
             }
             KeyCode::Char('b') => {
                 app.open_selected_in_browser();
+                true
+            }
+            KeyCode::Char('c') => {
+                app.copy_selected_branch();
                 true
             }
             KeyCode::Enter => {
@@ -224,6 +269,42 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_slash_opens_search_and_search_captures_shortcuts() {
+        let mut app = App::new(Box::new(MockGhClient::new()));
+        app.refresh();
+
+        assert_continue_changed(key(KeyCode::Char('/'), &mut app), true);
+        assert!(app.search_is_open());
+
+        assert_continue_changed(key(KeyCode::Char('r'), &mut app), true);
+        assert_eq!(app.search_query(), Some("r"));
+        assert!(!app.dashboard.loading);
+
+        assert_continue_changed(key(KeyCode::Esc, &mut app), true);
+        assert!(!app.search_is_open());
+    }
+
+    #[test]
+    fn search_keys_move_backspace_and_open_match() {
+        let mut app = App::new(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.open_search();
+
+        assert_continue_changed(key(KeyCode::Char('x'), &mut app), true);
+        assert_continue_changed(key(KeyCode::Backspace, &mut app), true);
+        assert_eq!(app.search_query(), Some(""));
+
+        assert_continue_changed(key(KeyCode::Down, &mut app), true);
+        assert_eq!(app.selected_search_index(), Some(1));
+        assert_continue_changed(ctrl_key(KeyCode::Char('p'), &mut app), true);
+        assert_eq!(app.selected_search_index(), Some(0));
+
+        assert_continue_changed(key(KeyCode::Enter, &mut app), true);
+        assert_eq!(app.view, AppView::Detail);
+        assert!(!app.search_is_open());
+    }
+
+    #[test]
     fn detail_keys_switch_panes_scroll_and_return_to_dashboard() {
         let mut app = App::new(Box::new(EmptySource));
         app.view = AppView::Detail;
@@ -246,6 +327,10 @@ mod tests {
 
     fn key(code: KeyCode, app: &mut App) -> InputOutcome {
         handle_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)), app).unwrap()
+    }
+
+    fn ctrl_key(code: KeyCode, app: &mut App) -> InputOutcome {
+        handle_event(Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL)), app).unwrap()
     }
 
     fn assert_continue_changed(outcome: InputOutcome, expected: bool) {

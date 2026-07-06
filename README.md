@@ -15,6 +15,7 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
   - PRs opened by you
   - PRs awaiting your review
 - Compact PR rows with review state, CI state, reviewers, and age
+- Dashboard fuzzy finder for quickly opening loaded PRs by repo, branch, title, author, reviewer, status, or section
 - PR detail view with description, branch/state/mergeability metadata, and discussion
 - Unified discussion carousel for issue comments and review threads
 - Review-thread code context rendered next to comments
@@ -87,10 +88,27 @@ gh_timeout_seconds = 30
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
 | `enter` | Open selected PR |
+| `/` | Search loaded PRs |
+| `c` | Copy selected PR branch name |
 | `space` / `o` | Collapse/expand repository |
 | `b` | Open selected PR in browser |
 | `r` | Refresh dashboard |
 | `q` / `esc` | Quit |
+
+### Dashboard search
+
+The dashboard fuzzy finder searches only PRs already loaded in the dashboard. It includes PRs hidden inside collapsed repository groups and does not make additional GitHub calls.
+
+Searchable fields include repository, PR number, title, branch name, author, reviewers, requested reviewers, review status, CI/check status, and dashboard section (`My PRs` or `Awaiting Review`). With an empty query, the popup shows loaded PRs in dashboard order.
+
+| Key | Action |
+| --- | --- |
+| text | Type search query |
+| `backspace` | Delete character |
+| `↓` / `ctrl-n` | Move down |
+| `↑` / `ctrl-p` | Move up |
+| `enter` | Open selected PR |
+| `esc` | Close search |
 
 ### PR detail
 

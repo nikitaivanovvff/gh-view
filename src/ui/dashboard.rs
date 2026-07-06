@@ -3,14 +3,14 @@ use super::text::{
     selected_style, status_style, truncate,
 };
 use super::theme;
-use crate::app::{App, DashboardErrorLine, DashboardErrorPage, Row};
+use crate::app::{App, DashboardErrorLine, DashboardErrorPage, DashboardSearchMatch, Row};
 use crate::model::PullRequest;
 use crate::ui::footer::{FooterItem, footer_lines};
 use ratatui::layout::Alignment;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     if app.show_dashboard_loading_screen() {
@@ -35,17 +35,22 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let width = chunks[0].width as usize;
     let mut lines = Vec::new();
 
+    let user = app
+        .dashboard
+        .current_user
+        .as_deref()
+        .map(|user| format!("@{user}"))
+        .unwrap_or_else(|| "@unknown".to_owned());
+    let header_left_width = "GH-VIEW".chars().count() + 2 + user.chars().count();
+    let notice_width = width.saturating_sub(header_left_width);
+    let notice = truncate(app.copy_notice_message().unwrap_or_default(), notice_width);
+    let padding = notice_width.saturating_sub(notice.chars().count());
     let header = vec![
         Span::styled("GH-VIEW", theme::accent().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(
-            app.dashboard
-                .current_user
-                .as_deref()
-                .map(|user| format!("@{user}"))
-                .unwrap_or_else(|| "@unknown".to_owned()),
-            theme::muted(),
-        ),
+        Span::styled(user, theme::muted()),
+        Span::raw(" ".repeat(padding)),
+        Span::styled(notice, theme::branch()),
     ];
     lines.push(Line::from(header));
     lines.push(rule_line(width));
@@ -69,6 +74,7 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             }
             Row::Pr(pr) => {
                 lines.push(pr_line(index == app.dashboard.selected, pr, width));
+                lines.push(branch_line(pr));
                 lines.push(reviewers_line(pr));
             }
             Row::Message(message) => {
@@ -82,17 +88,26 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         Paragraph::new(dashboard_footer_lines(app, width)),
         chunks[1],
     );
+
+    if app.search_is_open() {
+        render_search_overlay(frame, app);
+    }
 }
 
 fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let mut items = vec![
         FooterItem::new("j/k", "move"),
         FooterItem::new("enter", "details"),
+        FooterItem::new("/", "search"),
+        FooterItem::new("c", "copy branch"),
         FooterItem::new("b", "open in browser"),
         FooterItem::new("o", "toggle group"),
         FooterItem::new("r", "refresh"),
         FooterItem::new("q", "quit"),
     ];
+    if let Some(message) = app.status_message() {
+        items.push(FooterItem::new("status", message));
+    }
     if app.is_mock() {
         let mode = match app.mock_error_mode() {
             Some(crate::github::MockErrorMode::GitHubDown) => "down",
@@ -111,6 +126,118 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ]);
     }
     footer_lines(width, items)
+}
+
+fn render_search_overlay(frame: &mut ratatui::Frame<'_>, app: &App) {
+    let area = frame.area();
+    if area.width < 8 || area.height < 3 {
+        return;
+    }
+
+    let width = ((area.width as f32 * 0.7) as u16).clamp(8, area.width);
+    let height = area.height.saturating_sub(2).clamp(3, 12);
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    let inner_width = popup.width.saturating_sub(4) as usize;
+    let Some(query) = app.search_query() else {
+        return;
+    };
+    let selected = app.selected_search_index().unwrap_or_default();
+
+    let matches = app.search_matches();
+    let mut lines = Vec::new();
+    let prompt = format!("/ {query}");
+    lines.push(Line::from(vec![
+        Span::styled("Search PRs ", theme::accent().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            truncate(&prompt, inner_width.saturating_sub(11).max(1)),
+            theme::normal(),
+        ),
+    ]));
+    lines.push(rule_line(inner_width));
+
+    let match_rows = popup.height.saturating_sub(5) as usize;
+    if match_rows > 0 {
+        if matches.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  ", selected_style()),
+                Span::styled("No matches", theme::muted()),
+            ]));
+        } else {
+            let start = selected.saturating_sub(match_rows.saturating_sub(1));
+            for (index, item) in matches.iter().enumerate().skip(start).take(match_rows) {
+                lines.push(search_match_line(index == selected, item, inner_width));
+            }
+        }
+    }
+
+    lines.push(rule_line(inner_width));
+    lines.push(Line::from(vec![
+        Span::styled("enter", theme::muted_key()),
+        Span::styled(" open  ", theme::muted()),
+        Span::styled("esc", theme::muted_key()),
+        Span::styled(" close  ", theme::muted()),
+        Span::styled("↑/↓ ctrl-p/n", theme::muted_key()),
+        Span::styled(" move", theme::muted()),
+    ]));
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::rule()),
+        ),
+        popup,
+    );
+}
+
+fn search_match_line(selected: bool, item: &DashboardSearchMatch, width: usize) -> Line<'static> {
+    let gutter = if selected { "▸" } else { " " };
+    let status = pr_status(&item.pr);
+    let left = format!("{} #{} {}", item.pr.repo, item.pr.number, item.pr.title);
+    let branch = truncate(&branch_label(&item.pr.head_ref), 24);
+    let right = format!("{}  {}", status, item.section);
+    let right_width = right.chars().count().min(width.saturating_sub(4));
+    let branch_width = if branch.is_empty() {
+        0
+    } else {
+        branch.chars().count() + 1
+    };
+    let left_width = width.saturating_sub(right_width + branch_width + 4).max(1);
+    let left = truncate(&left, left_width);
+    let padding = width
+        .saturating_sub(2 + left.chars().count() + branch_width + right_width)
+        .max(1);
+
+    Line::from(vec![
+        Span::styled(gutter, selected_style()),
+        Span::raw(" "),
+        Span::styled(
+            left,
+            theme::normal().add_modifier(if selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
+        ),
+        Span::raw(if branch.is_empty() { "" } else { " " }),
+        Span::styled(branch, theme::branch()),
+        Span::raw(" ".repeat(padding)),
+        Span::styled(truncate(&right, right_width), status_style(&status)),
+    ])
+}
+
+fn branch_label(head_ref: &str) -> String {
+    if head_ref.is_empty() {
+        String::new()
+    } else {
+        format!(" {head_ref}")
+    }
 }
 
 fn render_dashboard_error(frame: &mut ratatui::Frame<'_>, page: &DashboardErrorPage) {
@@ -259,6 +386,17 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
     ])
 }
 
+pub(super) fn branch_line(pr: &PullRequest) -> Line<'static> {
+    if pr.head_ref.is_empty() {
+        return Line::from(vec![Span::raw("        ")]);
+    }
+
+    Line::from(vec![
+        Span::raw("        "),
+        Span::styled(branch_label(&pr.head_ref), theme::branch()),
+    ])
+}
+
 pub(super) fn reviewers_line(pr: &PullRequest) -> Line<'static> {
     if pr.reviewers.is_empty() {
         return Line::from(vec![
@@ -400,6 +538,7 @@ mod tests {
             number: 1,
             title: "Title".to_owned(),
             author: "author".to_owned(),
+            head_ref: "feature-title".to_owned(),
             url: "https://example.test".to_owned(),
             updated_at: "2026-07-01T10:00:00Z".to_owned(),
             state: "OPEN".to_owned(),
