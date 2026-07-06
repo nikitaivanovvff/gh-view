@@ -4,7 +4,7 @@ Guidance for coding agents working on gh-view.
 
 ## Project overview
 
-gh-view is a Rust terminal application for tracking GitHub pull requests. It will use the GitHub CLI (`gh`) as the transport layer and evolve into a TUI with dashboard, PR detail, comments, and quick actions.
+gh-view is a Rust terminal application for tracking GitHub pull requests. It uses the GitHub CLI (`gh`) as the transport layer and provides a TUI dashboard, PR detail view, unified discussion carousel, review-thread code context, and quick browser/refresh actions.
 
 ## Source of truth
 
@@ -40,25 +40,33 @@ cargo run -- --mock
 
 Use `--mock` for development/demo runs that should not call `gh`. Live runs must rely on the user's installed and authenticated GitHub CLI.
 
-## Folder structure
+## Current architecture
 
-Follow this structure as the project grows:
+- `src/main.rs`: CLI parsing, config loading, top-level command dispatch, and selecting live vs mock data sources.
+- `src/config.rs`: optional user config loading from `~/.config/gh-view/config.toml`.
+- `src/app.rs`: application state, navigation, async dashboard/detail refresh orchestration, background result polling, active detail-pane state, and browser actions. Keep it UI-framework-light and testable.
+- `src/app/rows.rs`: projection from dashboard domain data into visible dashboard rows, including repository expansion state.
+- `src/model/`: domain models for dashboards, PRs, repository groups, reviewers, checks, comments, discussion items, and code context. Keep GitHub/Ratatui details out of domain models.
+- `src/github/`: GitHub data-source trait, live `gh` client, mock client, command execution, error classification, GraphQL/JSON types, and response parsing. Live code must shell out to user-configured `gh`; do not manage tokens.
+- `src/github/gh/types.rs`: JSON/GraphQL response DTOs and conversion into domain models. Keep parsing tests here.
+- `src/ui/`: Ratatui terminal setup, render loop, input handling, dashboard rendering, detail rendering, theme, and text helpers. Keep network/GitHub calls out of rendering code.
 
-- `src/main.rs`: CLI parsing, top-level command dispatch, and selecting live vs mock data source only.
-- `src/app.rs`: application state, navigation, refresh orchestration, and view rows. Keep it UI-framework-light and testable.
-- `src/model/`: domain models such as PRs, repository groups, reviewers, checks, comments, and threads. Keep GitHub/Ratatui details out of domain models.
-- `src/github/`: all GitHub CLI interaction, JSON parsing, data-source traits, and mock data sources for local development. Live code must shell out to user-configured `gh`; do not manage tokens.
-- `src/ui/`: Ratatui rendering, terminal setup/teardown, input handling, and view components. Keep network/GitHub calls out of rendering code.
-- Future modules may include `src/config/` and `src/store/` once config and caching are introduced.
+Important data flow:
+
+- Dashboard loads should stay bulk-oriented: fetch authored PRs and review-requested PRs together when possible, then normalize into `Dashboard`/`RepoGroup` models.
+- Opening a PR should use a placeholder from dashboard metadata immediately, then load detail and discussion in background workers.
+- Review-thread discussion may load source-file context around the commented line; fall back to GraphQL diff hunks if raw source context is unavailable.
 
 ## UI direction
 
 - Use a flat full-screen terminal layout, not boxed dashboard panels.
-- Prefer screenshot-like CLI status styling: dark background, muted separators, compact rows.
+- Prefer a minimal terminal UI style: compact rows, quiet separators, clear typography, and only enough color to show state and focus.
 - Use purple as the primary accent for title/cursor, green for approved/passing/reviewers, blue for needs-review, yellow/orange for changes-requested/pending, and red for failing.
 - Keep selection as a gutter marker, not a highlighted row background.
 - Keep PR rows indented under repository rows.
 - Keep right-side age/CI columns aligned and truncate long PR titles with an ellipsis.
+- Keep stale PR hints visible but not noisy; warning-colored age markers are enough unless the product direction changes.
+- In PR detail, keep active pane focus visible at pane edges/headers while preserving the flat layout.
 - Use mock mode (`--mock`) when tuning UI layout.
 
 ## Coding guidelines
