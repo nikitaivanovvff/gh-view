@@ -12,22 +12,6 @@ pub enum AppStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DetailStatus {
-    Idle,
-    Loading,
-    Ready,
-    Error(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DiscussionStatus {
-    Idle,
-    Loading,
-    Ready,
-    Error(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DashboardErrorPage {
     pub art: Vec<String>,
     pub lines: Vec<DashboardErrorLine>,

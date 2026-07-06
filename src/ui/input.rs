@@ -229,19 +229,19 @@ mod tests {
         app.view = AppView::Detail;
 
         assert_continue_changed(key(KeyCode::Tab, &mut app), true);
-        assert_eq!(app.active_detail_pane, DetailPane::Discussion);
+        assert_eq!(app.detail.active_pane, DetailPane::Discussion);
 
         assert_continue_changed(key(KeyCode::Char('j'), &mut app), true);
-        assert_eq!(app.discussion_scroll, 1);
+        assert_eq!(app.detail.discussion_scroll, 1);
 
         assert_continue_changed(key(KeyCode::Tab, &mut app), true);
-        assert_eq!(app.active_detail_pane, DetailPane::Description);
+        assert_eq!(app.detail.active_pane, DetailPane::Description);
 
         assert_continue_changed(key(KeyCode::Char('D'), &mut app), false);
 
         assert_continue_changed(key(KeyCode::Esc, &mut app), true);
         assert_eq!(app.view, AppView::Dashboard);
-        assert_eq!(app.detail_status, DetailStatus::Idle);
+        assert_eq!(app.detail.detail_status, DetailStatus::Idle);
     }
 
     fn key(code: KeyCode, app: &mut App) -> InputOutcome {
