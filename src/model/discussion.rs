@@ -27,6 +27,7 @@ pub struct CodeContext {
     pub path: String,
     pub start_line: Option<u64>,
     pub highlighted_line: Option<u64>,
+    pub highlighted_kind: Option<CodeLineKind>,
     pub lines: Vec<CodeContextLine>,
 }
 

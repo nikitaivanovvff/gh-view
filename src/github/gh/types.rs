@@ -413,6 +413,11 @@ impl ReviewThreadNode {
         let mut comments = self.comments.nodes.into_iter();
         let first = comments.next()?;
         let highlighted_line = self.line.or(self.original_line);
+        let highlighted_kind = if self.line.is_none() && self.original_line.is_some() {
+            Some(CodeLineKind::Removed)
+        } else {
+            None
+        };
         let path = self.path;
         let diff_lines = parse_diff_hunk(&first.diff_hunk);
         let lines = highlighted_line
@@ -429,6 +434,7 @@ impl ReviewThreadNode {
                 path,
                 start_line,
                 highlighted_line,
+                highlighted_kind,
                 lines,
             })
         };

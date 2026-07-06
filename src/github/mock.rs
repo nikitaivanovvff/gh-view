@@ -206,6 +206,7 @@ fn mock_discussion(pr: &PullRequest) -> Vec<DiscussionItem> {
                 path: "src/ui/mod.rs".to_owned(),
                 start_line: Some(138),
                 highlighted_line: Some(146),
+                highlighted_kind: None,
                 lines: vec![
                     code_line(138, CodeLineKind::Context, "lines.push(Line::styled(\"COMMENTS\", theme::muted()));"),
                     code_line(139, CodeLineKind::Context, "if detail.comments.is_empty() {"),

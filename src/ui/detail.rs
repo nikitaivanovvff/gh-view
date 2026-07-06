@@ -197,6 +197,7 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         Paragraph::new(code_context_lines(
             item,
             panes[2].width as usize,
+            panes[2].height as usize,
             app.active_detail_pane == DetailPane::Discussion,
         ))
         .style(theme::normal()),
@@ -363,7 +364,12 @@ fn discussion_lines(
     lines
 }
 
-fn code_context_lines(item: &DiscussionItem, width: usize, focused: bool) -> Vec<Line<'static>> {
+fn code_context_lines(
+    item: &DiscussionItem,
+    width: usize,
+    height: usize,
+    focused: bool,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     lines.push(focus_rule_line(width, focused));
     lines.push(section_label("CODE CONTEXT", focused));
@@ -387,8 +393,10 @@ fn code_context_lines(item: &DiscussionItem, width: usize, focused: bool) -> Vec
         Span::styled(format!("{}{}", context.path, line_hint), theme::muted_key()),
     ]));
 
-    for code in &context.lines {
-        let highlighted = code.number == context.highlighted_line;
+    let visible_range = visible_code_line_range(context, height.saturating_sub(lines.len()));
+    let highlighted_index = highlighted_code_line_index(context);
+    for (index, code) in context.lines[visible_range.clone()].iter().enumerate() {
+        let highlighted = highlighted_index == Some(visible_range.start + index);
         let marker = match code.kind {
             CodeLineKind::Added => "+",
             CodeLineKind::Removed => "-",
@@ -428,6 +436,47 @@ fn code_context_lines(item: &DiscussionItem, width: usize, focused: bool) -> Vec
     }
 
     lines
+}
+
+fn visible_code_line_range(
+    context: &crate::model::CodeContext,
+    available_height: usize,
+) -> std::ops::Range<usize> {
+    if available_height == 0 || context.lines.len() <= available_height {
+        return 0..context.lines.len();
+    }
+
+    let highlighted_index = highlighted_code_line_index(context).unwrap_or(0);
+    let half = available_height / 2;
+    let start = highlighted_index
+        .saturating_sub(half)
+        .min(context.lines.len().saturating_sub(available_height));
+    start..start + available_height
+}
+
+fn highlighted_code_line_index(context: &crate::model::CodeContext) -> Option<usize> {
+    let highlighted_line = context.highlighted_line?;
+    if let Some(kind) = &context.highlighted_kind
+        && let Some(index) = context
+            .lines
+            .iter()
+            .position(|line| line.number == Some(highlighted_line) && &line.kind == kind)
+    {
+        return Some(index);
+    }
+
+    context
+        .lines
+        .iter()
+        .position(|line| {
+            line.number == Some(highlighted_line) && line.kind != CodeLineKind::Removed
+        })
+        .or_else(|| {
+            context
+                .lines
+                .iter()
+                .position(|line| line.number == Some(highlighted_line))
+        })
 }
 
 fn push_wrapped(
@@ -605,7 +654,7 @@ mod tests {
             code_context: None,
         };
         assert!(
-            code_context_lines(&item, 80, false)
+            code_context_lines(&item, 80, 20, false)
                 .iter()
                 .any(|line| line.to_string().contains("no code context"))
         );
@@ -614,6 +663,7 @@ mod tests {
             path: "src/main.rs".to_owned(),
             start_line: Some(10),
             highlighted_line: Some(11),
+            highlighted_kind: None,
             lines: vec![crate::model::CodeContextLine {
                 number: Some(11),
                 kind: CodeLineKind::Added,
@@ -621,12 +671,59 @@ mod tests {
             }],
         });
 
-        let text = code_context_lines(&item, 80, true)
+        let text = code_context_lines(&item, 80, 20, true)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains("src/main.rs:11"));
         assert!(text.contains("let value = true;"));
+    }
+
+    #[test]
+    fn visible_code_lines_centers_highlight_when_context_is_taller_than_pane() {
+        let context = crate::model::CodeContext {
+            path: "src/main.rs".to_owned(),
+            start_line: Some(1),
+            highlighted_line: Some(10),
+            highlighted_kind: None,
+            lines: (1..=20)
+                .map(|line| crate::model::CodeContextLine {
+                    number: Some(line),
+                    kind: CodeLineKind::Context,
+                    text: format!("line {line}"),
+                })
+                .collect(),
+        };
+
+        let visible = &context.lines[visible_code_line_range(&context, 7)];
+
+        assert_eq!(visible.first().and_then(|line| line.number), Some(7));
+        assert_eq!(visible.last().and_then(|line| line.number), Some(13));
+        assert!(visible.iter().any(|line| line.number == Some(10)));
+    }
+
+    #[test]
+    fn highlighted_code_line_prefers_removed_side_when_comment_targets_deleted_line() {
+        let context = crate::model::CodeContext {
+            path: "README.md".to_owned(),
+            start_line: Some(98),
+            highlighted_line: Some(102),
+            highlighted_kind: Some(CodeLineKind::Removed),
+            lines: vec![
+                crate::model::CodeContextLine {
+                    number: Some(102),
+                    kind: CodeLineKind::Removed,
+                    text: "removed".to_owned(),
+                },
+                crate::model::CodeContextLine {
+                    number: Some(102),
+                    kind: CodeLineKind::Context,
+                    text: "kept".to_owned(),
+                },
+            ],
+        };
+
+        assert_eq!(highlighted_code_line_index(&context), Some(0));
     }
 }
