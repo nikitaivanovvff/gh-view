@@ -1,81 +1,58 @@
+mod dashboard;
+mod detail;
 mod rows;
+mod status;
 
-use crate::github::{
-    GhError, MockErrorMode, PullRequestSource, is_auth_error, is_github_outage_error,
-};
-use crate::model::{Dashboard, PullRequest, PullRequestDetail};
-pub use rows::{DashboardSection, Row};
-use rows::{group_names, push_groups};
-use std::collections::BTreeSet;
-use std::sync::mpsc::{self, Receiver};
+use crate::github::{MockErrorMode, PullRequestSource};
+use crate::model::PullRequest;
+use dashboard::DashboardLoad;
+pub use dashboard::DashboardState;
+pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
+#[cfg(test)]
+pub use rows::DashboardSection;
+pub use rows::Row;
+use status::classify_refresh_error;
+pub use status::{AppStatus, DashboardErrorLine, DashboardErrorPage};
+use std::sync::mpsc;
 use std::thread;
-
-type DashboardLoad = Result<(String, Vec<PullRequest>, Vec<PullRequest>), AppStatus>;
-type DashboardReceiver = Receiver<DashboardLoad>;
 
 pub struct App {
     client: Box<dyn PullRequestSource>,
-    dashboard: Dashboard,
-    collapsed_groups: BTreeSet<String>,
-    pub current_user: Option<String>,
-    pub selected: usize,
+    pub dashboard: DashboardState,
     pub status: AppStatus,
     pub view: AppView,
-    pub detail: Option<PullRequestDetail>,
-    pub detail_scroll: u16,
-    pub discussion_selected: usize,
-    pub discussion_scroll: u16,
-    pub active_detail_pane: DetailPane,
-    pub detail_status: DetailStatus,
-    pub discussion_status: DiscussionStatus,
-    pub dashboard_loading: bool,
+    pub detail: DetailState,
     pub loading_frame: usize,
-    dashboard_rx: Option<DashboardReceiver>,
-    detail_rx: Option<Receiver<Result<PullRequestDetail, String>>>,
-    discussion_rx: Option<Receiver<Result<Vec<crate::model::DiscussionItem>, String>>>,
 }
 
 impl App {
     pub fn new(client: Box<dyn PullRequestSource>) -> Self {
         Self {
             client,
-            dashboard: Dashboard::default(),
-            collapsed_groups: BTreeSet::new(),
-            current_user: None,
-            selected: 0,
+            dashboard: DashboardState::new(),
             status: AppStatus::Ready,
             view: AppView::Dashboard,
-            detail: None,
-            detail_scroll: 0,
-            discussion_selected: 0,
-            discussion_scroll: 0,
-            active_detail_pane: DetailPane::Description,
-            detail_status: DetailStatus::Idle,
-            discussion_status: DiscussionStatus::Idle,
-            dashboard_loading: false,
+            detail: DetailState::new(),
             loading_frame: 0,
-            dashboard_rx: None,
-            detail_rx: None,
-            discussion_rx: None,
         }
     }
 
     #[cfg(test)]
     pub fn refresh(&mut self) {
-        let result = refresh_dashboard(self.client.clone(), self.current_user.clone());
+        let result = refresh_dashboard(self.client.clone(), self.dashboard.current_user.clone());
         self.apply_refresh_result(result.map_err(classify_refresh_error));
     }
 
     pub fn refresh_async(&mut self) {
-        if self.dashboard_loading {
+        if self.dashboard.loading {
             return;
         }
 
         let client = self.client.clone();
-        let current_user = self.current_user.clone();
+        let current_user = self.dashboard.current_user.clone();
         let (tx, rx) = mpsc::channel();
-        self.dashboard_rx = Some(rx);
-        self.dashboard_loading = true;
+        self.dashboard.rx = Some(rx);
+        self.dashboard.loading = true;
         self.loading_frame = 0;
 
         thread::spawn(move || {
@@ -85,95 +62,44 @@ impl App {
     }
 
     fn apply_refresh_result(&mut self, result: DashboardLoad) {
-        self.dashboard_loading = false;
-        self.dashboard_rx = None;
+        self.dashboard.loading = false;
+        self.dashboard.rx = None;
         match result {
             Ok((user, my_prs, reviews)) => {
-                self.current_user = Some(user);
-                self.dashboard = Dashboard::from_prs(my_prs, reviews);
-                let valid_groups = group_names(&self.dashboard);
-                self.collapsed_groups = self
-                    .collapsed_groups
-                    .intersection(&valid_groups)
-                    .cloned()
-                    .collect();
+                self.dashboard.apply_success(user, my_prs, reviews);
                 self.status = AppStatus::Ready;
                 self.clamp_selection();
             }
             Err(status) => {
                 self.status = status;
-                self.dashboard = Dashboard::default();
+                self.dashboard.reset_after_error();
             }
         }
     }
 
     pub fn rows(&self) -> Vec<Row<'_>> {
-        match &self.status {
-            AppStatus::MissingGh => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
-            AppStatus::Unauthenticated(_) => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
-            AppStatus::GitHubOutage(_) if self.dashboard.is_empty() => return github_outage_rows(),
-            AppStatus::Timeout(_) if self.dashboard.is_empty() => return vec![
-                Row::Message("GitHub is taking too long to answer.".to_owned()),
-                Row::Message("The last gh command was stopped after 30s. Press r to retry.".to_owned()),
-            ],
-            AppStatus::Error(_) if self.dashboard.is_empty() => return vec![Row::Message("Could not load pull requests. Press r to retry.".to_owned())],
-            _ => {}
-        }
-
-        let mut rows = Vec::new();
-        rows.push(Row::Section("My PRs"));
-        push_groups(
-            &mut rows,
-            DashboardSection::MyPrs,
-            &self.dashboard.my_prs,
-            &self.collapsed_groups,
-        );
-        rows.push(Row::Section("Awaiting Review"));
-        push_groups(
-            &mut rows,
-            DashboardSection::AwaitingReview,
-            &self.dashboard.awaiting_review,
-            &self.collapsed_groups,
-        );
-
-        if self.dashboard.is_empty() {
-            rows.push(Row::Message(
-                "No open PRs found. Press r to refresh.".to_owned(),
-            ));
-        }
-
-        rows
+        self.dashboard.rows(&self.status)
     }
 
     pub fn clamp_selection(&mut self) {
-        self.selected = self.selected.min(self.rows().len().saturating_sub(1));
+        self.dashboard.clamp_selection(&self.status);
     }
 
     pub fn next(&mut self) {
-        let len = self.rows().len();
-        if len > 0 {
-            self.selected = (self.selected + 1).min(len - 1);
-        }
+        self.dashboard.next(&self.status);
     }
 
     pub fn previous(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        self.dashboard.previous();
     }
 
     pub fn toggle_selected_group(&mut self) {
-        let rows = self.rows();
-        let Some(repo) = rows.get(self.selected).and_then(Row::group_key) else {
-            return;
-        };
-
-        if !self.collapsed_groups.insert(repo.clone()) {
-            self.collapsed_groups.remove(&repo);
-        }
+        self.dashboard.toggle_selected_group(&self.status);
     }
 
     pub fn open_selected_detail(&mut self) {
         let rows = self.rows();
-        let Some(pr) = rows.get(self.selected).and_then(Row::pr).cloned() else {
+        let Some(pr) = rows.get(self.dashboard.selected).and_then(Row::pr).cloned() else {
             return;
         };
 
@@ -181,12 +107,8 @@ impl App {
     }
 
     fn open_detail_for_pr(&mut self, pr: PullRequest) {
-        self.detail = Some(placeholder_detail(pr.clone()));
+        self.detail.open_placeholder(pr.clone());
         self.view = AppView::Detail;
-        self.detail_scroll = 0;
-        self.discussion_selected = 0;
-        self.discussion_scroll = 0;
-        self.active_detail_pane = DetailPane::Description;
         self.status = AppStatus::Ready;
         self.start_detail_load(pr.clone());
         self.start_discussion_load(pr);
@@ -201,7 +123,7 @@ impl App {
     }
 
     fn poll_dashboard_load(&mut self) -> bool {
-        let Some(rx) = &self.dashboard_rx else {
+        let Some(rx) = &self.dashboard.rx else {
             return false;
         };
 
@@ -214,7 +136,7 @@ impl App {
     }
 
     fn poll_detail_load(&mut self) -> bool {
-        let Some(rx) = &self.detail_rx else {
+        let Some(rx) = &self.detail.detail_rx else {
             return false;
         };
 
@@ -222,56 +144,12 @@ impl App {
             return false;
         };
 
-        self.detail_rx = None;
-        match result {
-            Ok(mut loaded_detail) => {
-                if let Some(current_detail) = &mut self.detail {
-                    let mut existing_review_threads: Vec<_> = current_detail
-                        .discussion
-                        .iter()
-                        .filter(|item| {
-                            matches!(item.kind, crate::model::DiscussionKind::ReviewThread { .. })
-                        })
-                        .cloned()
-                        .collect();
-                    if loaded_detail
-                        .pr
-                        .review_decision
-                        .as_deref()
-                        .is_none_or(str::is_empty)
-                    {
-                        loaded_detail.pr.review_decision =
-                            current_detail.pr.review_decision.clone();
-                    }
-                    if loaded_detail
-                        .pr
-                        .check_status
-                        .as_deref()
-                        .is_none_or(str::is_empty)
-                    {
-                        loaded_detail.pr.check_status = current_detail.pr.check_status.clone();
-                    }
-                    loaded_detail
-                        .discussion
-                        .append(&mut existing_review_threads);
-                    loaded_detail.discussion.sort_by(|left, right| {
-                        left.created_at
-                            .cmp(&right.created_at)
-                            .then_with(|| left.url.cmp(&right.url))
-                    });
-                    *current_detail = loaded_detail;
-                }
-                self.detail_status = DetailStatus::Ready;
-            }
-            Err(error) => {
-                self.detail_status = DetailStatus::Error(error);
-            }
-        }
+        self.detail.apply_detail_result(result);
         true
     }
 
     fn poll_discussion_load(&mut self) -> bool {
-        let Some(rx) = &self.discussion_rx else {
+        let Some(rx) = &self.detail.discussion_rx else {
             return false;
         };
 
@@ -279,31 +157,15 @@ impl App {
             return false;
         };
 
-        self.discussion_rx = None;
-        match result {
-            Ok(mut discussion) => {
-                if let Some(detail) = &mut self.detail {
-                    detail.discussion.append(&mut discussion);
-                    detail.discussion.sort_by(|left, right| {
-                        left.created_at
-                            .cmp(&right.created_at)
-                            .then_with(|| left.url.cmp(&right.url))
-                    });
-                }
-                self.discussion_status = DiscussionStatus::Ready;
-            }
-            Err(error) => {
-                self.discussion_status = DiscussionStatus::Error(error);
-            }
-        }
+        self.detail.apply_discussion_result(result);
         true
     }
 
     fn start_detail_load(&mut self, pr: PullRequest) {
         let client = self.client.clone();
         let (tx, rx) = mpsc::channel();
-        self.detail_rx = Some(rx);
-        self.detail_status = DetailStatus::Loading;
+        self.detail.detail_rx = Some(rx);
+        self.detail.detail_status = DetailStatus::Loading;
         self.loading_frame = 0;
 
         thread::spawn(move || {
@@ -317,8 +179,8 @@ impl App {
     fn start_discussion_load(&mut self, pr: PullRequest) {
         let client = self.client.clone();
         let (tx, rx) = mpsc::channel();
-        self.discussion_rx = Some(rx);
-        self.discussion_status = DiscussionStatus::Loading;
+        self.detail.discussion_rx = Some(rx);
+        self.detail.discussion_status = DiscussionStatus::Loading;
         self.loading_frame = 0;
 
         thread::spawn(move || {
@@ -331,82 +193,45 @@ impl App {
 
     pub fn back_to_dashboard(&mut self) {
         self.view = AppView::Dashboard;
-        self.detail = None;
-        self.detail_scroll = 0;
-        self.discussion_selected = 0;
-        self.discussion_scroll = 0;
-        self.active_detail_pane = DetailPane::Description;
-        self.detail_status = DetailStatus::Idle;
-        self.discussion_status = DiscussionStatus::Idle;
-        self.detail_rx = None;
-        self.discussion_rx = None;
+        self.detail.clear();
     }
 
     pub fn scroll_active_down(&mut self) {
-        match self.active_detail_pane {
-            DetailPane::Description => self.detail_scroll = self.detail_scroll.saturating_add(1),
-            DetailPane::Discussion => {
-                self.discussion_scroll = self.discussion_scroll.saturating_add(1);
-            }
-        }
+        self.detail.scroll_active_down();
     }
 
     pub fn scroll_active_up(&mut self) {
-        match self.active_detail_pane {
-            DetailPane::Description => self.detail_scroll = self.detail_scroll.saturating_sub(1),
-            DetailPane::Discussion => {
-                self.discussion_scroll = self.discussion_scroll.saturating_sub(1);
-            }
-        }
+        self.detail.scroll_active_up();
     }
 
     pub fn toggle_detail_pane(&mut self) {
-        self.active_detail_pane = match self.active_detail_pane {
-            DetailPane::Description => DetailPane::Discussion,
-            DetailPane::Discussion => DetailPane::Description,
-        };
+        self.detail.toggle_pane();
     }
 
     pub fn next_discussion(&mut self) {
-        let Some(detail) = &self.detail else {
-            return;
-        };
-        if !detail.discussion.is_empty() {
-            self.discussion_selected = (self.discussion_selected + 1) % detail.discussion.len();
-            self.discussion_scroll = 0;
-        }
+        self.detail.next_discussion();
     }
 
     pub fn previous_discussion(&mut self) {
-        let Some(detail) = &self.detail else {
-            return;
-        };
-        if !detail.discussion.is_empty() {
-            self.discussion_selected = if self.discussion_selected == 0 {
-                detail.discussion.len() - 1
-            } else {
-                self.discussion_selected - 1
-            };
-            self.discussion_scroll = 0;
-        }
+        self.detail.previous_discussion();
     }
 
     pub fn selected_discussion_index(&self) -> usize {
-        self.detail
-            .as_ref()
-            .filter(|detail| !detail.discussion.is_empty())
-            .map(|detail| self.discussion_selected.min(detail.discussion.len() - 1))
-            .unwrap_or(0)
+        self.detail.selected_discussion_index()
     }
 
     pub fn open_selected_in_browser(&mut self) {
         let url = match self.view {
             AppView::Dashboard => self
                 .rows()
-                .get(self.selected)
+                .get(self.dashboard.selected)
                 .and_then(Row::pr_url)
                 .map(str::to_owned),
-            AppView::Detail => self.detail.as_ref().map(|detail| detail.pr.url.clone()),
+            AppView::Detail => self
+                .detail
+                .current
+                .as_ref()
+                .map(|detail| detail.pr.url.clone()),
         };
 
         let Some(url) = url else {
@@ -419,16 +244,15 @@ impl App {
     }
 
     pub fn show_dashboard_loading_screen(&self) -> bool {
-        self.dashboard_loading && self.dashboard.is_empty()
+        self.dashboard.show_loading_screen()
     }
 
     pub fn detail_is_loading(&self) -> bool {
-        self.detail_status == DetailStatus::Loading
-            || self.discussion_status == DiscussionStatus::Loading
+        self.detail.detail_is_loading()
     }
 
     pub fn is_loading(&self) -> bool {
-        self.dashboard_loading || self.detail_is_loading()
+        self.dashboard.loading || self.detail_is_loading()
     }
 
     pub fn advance_loading_frame(&mut self) {
@@ -438,59 +262,7 @@ impl App {
     }
 
     pub fn dashboard_error_page(&self) -> Option<DashboardErrorPage> {
-        if !self.dashboard.is_empty() {
-            return None;
-        }
-
-        match self.status {
-            AppStatus::MissingGh => Some(DashboardErrorPage {
-                art: Vec::new(),
-                lines: vec![
-                    DashboardErrorLine::Text("GitHub CLI `gh` was not found on PATH.".to_owned()),
-                    DashboardErrorLine::Text(
-                        "Install it, authenticate it, then press r to retry.".to_owned(),
-                    ),
-                ],
-            }),
-            AppStatus::Unauthenticated(_) => Some(DashboardErrorPage {
-                art: Vec::new(),
-                lines: vec![
-                    DashboardErrorLine::Text("GitHub CLI is not authenticated.".to_owned()),
-                    DashboardErrorLine::Text(
-                        "Run `gh auth login`, then press r to retry.".to_owned(),
-                    ),
-                ],
-            }),
-            AppStatus::GitHubOutage(_) => Some(DashboardErrorPage {
-                art: vec![
-                    "        Zzz".to_owned(),
-                    "     /\\_/\\".to_owned(),
-                    "    ( -.- )".to_owned(),
-                    "    / >  < \\".to_owned(),
-                    "GitHub cat is asleep on the deploy button".to_owned(),
-                ],
-                lines: vec![
-                    DashboardErrorLine::Text("Looks like GitHub is having a problem.".to_owned()),
-                    DashboardErrorLine::StatusPage,
-                ],
-            }),
-            AppStatus::Timeout(_) => Some(DashboardErrorPage {
-                art: Vec::new(),
-                lines: vec![
-                    DashboardErrorLine::Text("GitHub is taking too long to answer.".to_owned()),
-                    DashboardErrorLine::Text(
-                        "The last gh command was stopped. Press r to retry.".to_owned(),
-                    ),
-                ],
-            }),
-            AppStatus::Error(_) => Some(DashboardErrorPage {
-                art: Vec::new(),
-                lines: vec![DashboardErrorLine::Text(
-                    "Could not load pull requests. Press r to retry.".to_owned(),
-                )],
-            }),
-            AppStatus::Ready => None,
-        }
+        status::dashboard_error_page(&self.status, self.dashboard.data.is_empty())
     }
 
     pub fn is_mock(&self) -> bool {
@@ -506,8 +278,8 @@ impl App {
             return;
         }
         self.client.set_mock_error_mode(mode);
-        self.dashboard_loading = false;
-        self.dashboard_rx = None;
+        self.dashboard.loading = false;
+        self.dashboard.rx = None;
         self.refresh_async();
     }
 }
@@ -526,124 +298,19 @@ fn refresh_dashboard(
     Ok((user, my_prs, reviews))
 }
 
-fn classify_refresh_error(error: anyhow::Error) -> AppStatus {
-    if let Some(error) = error.downcast_ref::<GhError>() {
-        return match error {
-            GhError::Missing(_) => AppStatus::MissingGh,
-            GhError::Unauthenticated(message) => AppStatus::Unauthenticated(message.clone()),
-            GhError::GitHubOutage(message) => AppStatus::GitHubOutage(message.clone()),
-            GhError::Timeout(message) => AppStatus::Timeout(message.clone()),
-            GhError::Command(message) => classify_refresh_message(message.clone()),
-        };
-    }
-
-    classify_refresh_message(error.to_string())
-}
-
-fn classify_refresh_message(message: String) -> AppStatus {
-    if message.contains("executable file not found")
-        || message.contains("No such file or directory")
-        || message.contains("failed to run gh")
-    {
-        AppStatus::MissingGh
-    } else if is_auth_error(&message) {
-        AppStatus::Unauthenticated(message)
-    } else if is_github_outage_error(&message) {
-        AppStatus::GitHubOutage(message)
-    } else if message.contains("timed out after ") {
-        AppStatus::Timeout(message)
-    } else {
-        AppStatus::Error(message)
-    }
-}
-
-fn github_outage_rows() -> Vec<Row<'static>> {
-    vec![
-        Row::Message("        Zzz".to_owned()),
-        Row::Message("     /\\_/\\".to_owned()),
-        Row::Message("    ( -.- )".to_owned()),
-        Row::Message("    / >  < \\".to_owned()),
-        Row::Message("GitHub cat is asleep on the deploy button".to_owned()),
-        Row::Message(String::new()),
-        Row::Message("Looks like GitHub is having a problem.".to_owned()),
-        Row::Message("Check https://www.githubstatus.com/ and press r to retry.".to_owned()),
-    ]
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DashboardErrorPage {
-    pub art: Vec<String>,
-    pub lines: Vec<DashboardErrorLine>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DashboardErrorLine {
-    Text(String),
-    StatusPage,
-}
-
-fn placeholder_detail(pr: PullRequest) -> PullRequestDetail {
-    let state = if pr.state.is_empty() {
-        "unknown".to_owned()
-    } else {
-        pr.state.clone()
-    };
-
-    PullRequestDetail {
-        pr,
-        body: String::new(),
-        state,
-        mergeable: None,
-        head_ref: String::new(),
-        base_ref: String::new(),
-        reviews: Vec::new(),
-        discussion: Vec::new(),
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppView {
     Dashboard,
     Detail,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AppStatus {
-    Ready,
-    MissingGh,
-    Unauthenticated(String),
-    GitHubOutage(String),
-    Timeout(String),
-    Error(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DetailPane {
-    Description,
-    Discussion,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DetailStatus {
-    Idle,
-    Loading,
-    Ready,
-    Error(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DiscussionStatus {
-    Idle,
-    Loading,
-    Ready,
-    Error(String),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::github::GhStatus;
-    use crate::model::{DiscussionItem, DiscussionKind, Reviewer, ReviewerState};
+    use crate::model::{
+        DiscussionItem, DiscussionKind, PullRequestDetail, Reviewer, ReviewerState,
+    };
     use anyhow::{Result, anyhow};
     use std::sync::{
         Arc,
@@ -719,7 +386,7 @@ mod tests {
         app.refresh();
         app.refresh();
 
-        assert_eq!(app.current_user.as_deref(), Some("octocat"));
+        assert_eq!(app.dashboard.current_user.as_deref(), Some("octocat"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(matches!(app.status, AppStatus::Ready));
         assert!(
@@ -800,19 +467,19 @@ mod tests {
     fn dashboard_loading_screen_is_for_empty_dashboard_loads() {
         let mut app = App::new(Box::new(TestSource::ok()));
 
-        app.dashboard_loading = true;
+        app.dashboard.loading = true;
         assert!(app.show_dashboard_loading_screen());
         assert!(matches!(
             app.rows().last(),
             Some(Row::Message(message)) if !message.contains("Loading")
         ));
 
-        app.current_user = Some("octocat".to_owned());
+        app.dashboard.current_user = Some("octocat".to_owned());
         assert!(app.show_dashboard_loading_screen());
 
-        app.dashboard_loading = false;
+        app.dashboard.loading = false;
         app.refresh();
-        app.dashboard_loading = true;
+        app.dashboard.loading = true;
         assert!(!app.show_dashboard_loading_screen());
     }
 
@@ -823,7 +490,7 @@ mod tests {
         app.advance_loading_frame();
         assert_eq!(app.loading_frame, 0);
 
-        app.dashboard_loading = true;
+        app.dashboard.loading = true;
         app.advance_loading_frame();
         assert_eq!(app.loading_frame, 1);
     }
@@ -865,7 +532,7 @@ mod tests {
 
         let expanded_count = app.rows().len();
         app.next();
-        assert_eq!(app.selected, 1);
+        assert_eq!(app.dashboard.selected, 1);
         app.toggle_selected_group();
 
         assert!(app.rows().len() < expanded_count);
@@ -874,7 +541,7 @@ mod tests {
             Some(Row::Group { open: false, .. })
         ));
         app.previous();
-        assert_eq!(app.selected, 0);
+        assert_eq!(app.dashboard.selected, 0);
     }
 
     #[test]
@@ -886,15 +553,15 @@ mod tests {
         app.open_selected_detail();
 
         assert_eq!(app.view, AppView::Detail);
-        assert_eq!(app.detail_status, DetailStatus::Loading);
-        assert_eq!(app.discussion_status, DiscussionStatus::Loading);
-        assert_eq!(app.detail.as_ref().unwrap().pr.number, 1);
+        assert_eq!(app.detail.detail_status, DetailStatus::Loading);
+        assert_eq!(app.detail.discussion_status, DiscussionStatus::Loading);
+        assert_eq!(app.detail.current.as_ref().unwrap().pr.number, 1);
 
         poll_until_ready(&mut app);
 
-        assert_eq!(app.detail_status, DetailStatus::Ready);
-        assert_eq!(app.discussion_status, DiscussionStatus::Ready);
-        let detail = app.detail.as_ref().unwrap();
+        assert_eq!(app.detail.detail_status, DetailStatus::Ready);
+        assert_eq!(app.detail.discussion_status, DiscussionStatus::Ready);
+        let detail = app.detail.current.as_ref().unwrap();
         assert_eq!(detail.body, "Loaded body");
         assert_eq!(detail.discussion.len(), 2);
     }
@@ -914,7 +581,7 @@ mod tests {
         app.open_selected_detail();
         poll_until_ready(&mut app);
 
-        let pr = &app.detail.as_ref().unwrap().pr;
+        let pr = &app.detail.current.as_ref().unwrap().pr;
         assert_eq!(pr.review_decision.as_deref(), Some("APPROVED"));
         assert_eq!(pr.check_status.as_deref(), Some("passing"));
     }
@@ -923,18 +590,18 @@ mod tests {
     fn detail_pane_focus_controls_active_scroll_target() {
         let mut app = App::new(Box::new(TestSource::ok()));
         app.scroll_active_down();
-        assert_eq!(app.detail_scroll, 1);
-        assert_eq!(app.discussion_scroll, 0);
+        assert_eq!(app.detail.description_scroll, 1);
+        assert_eq!(app.detail.discussion_scroll, 0);
 
         app.toggle_detail_pane();
         app.scroll_active_down();
-        assert_eq!(app.detail_scroll, 1);
-        assert_eq!(app.discussion_scroll, 1);
+        assert_eq!(app.detail.description_scroll, 1);
+        assert_eq!(app.detail.discussion_scroll, 1);
 
         app.toggle_detail_pane();
-        assert_eq!(app.active_detail_pane, DetailPane::Description);
+        assert_eq!(app.detail.active_pane, DetailPane::Description);
         app.scroll_active_up();
-        assert_eq!(app.detail_scroll, 0);
+        assert_eq!(app.detail.description_scroll, 0);
     }
 
     #[test]
@@ -945,12 +612,12 @@ mod tests {
             discussion("alice", "2026-07-01T10:00:00Z"),
             discussion("bob", "2026-07-01T10:01:00Z"),
         ];
-        app.detail = Some(detail);
-        app.discussion_scroll = 4;
+        app.detail.current = Some(detail);
+        app.detail.discussion_scroll = 4;
 
         app.previous_discussion();
         assert_eq!(app.selected_discussion_index(), 1);
-        assert_eq!(app.discussion_scroll, 0);
+        assert_eq!(app.detail.discussion_scroll, 0);
         app.next_discussion();
         assert_eq!(app.selected_discussion_index(), 0);
     }
@@ -959,8 +626,8 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             app.poll_background();
-            if app.detail_status != DetailStatus::Loading
-                && app.discussion_status != DiscussionStatus::Loading
+            if app.detail.detail_status != DetailStatus::Loading
+                && app.detail.discussion_status != DiscussionStatus::Loading
             {
                 return;
             }

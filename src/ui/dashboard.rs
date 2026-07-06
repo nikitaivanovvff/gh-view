@@ -39,7 +39,8 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         Span::styled("GH-VIEW", theme::accent().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(
-            app.current_user
+            app.dashboard
+                .current_user
                 .as_deref()
                 .map(|user| format!("@{user}"))
                 .unwrap_or_else(|| "@unknown".to_owned()),
@@ -59,14 +60,19 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             Row::Group {
                 repo, count, open, ..
             } => {
-                lines.push(group_line(index == app.selected, repo, *count, *open));
+                lines.push(group_line(
+                    index == app.dashboard.selected,
+                    repo,
+                    *count,
+                    *open,
+                ));
             }
             Row::Pr(pr) => {
-                lines.push(pr_line(index == app.selected, pr, width));
+                lines.push(pr_line(index == app.dashboard.selected, pr, width));
                 lines.push(reviewers_line(pr));
             }
             Row::Message(message) => {
-                lines.push(message_line(index == app.selected, message));
+                lines.push(message_line(index == app.dashboard.selected, message));
             }
         }
     }
