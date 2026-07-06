@@ -13,8 +13,8 @@ use ratatui::backend::CrosstermBackend;
 use std::io;
 use std::time::{Duration, Instant};
 
-pub fn run(client: Box<dyn PullRequestSource>) -> Result<()> {
-    let mut app = App::new(client);
+pub fn run(client: Box<dyn PullRequestSource>, nerd_fonts: bool) -> Result<()> {
+    let mut app = App::with_nerd_fonts(client, nerd_fonts);
     app.refresh_async();
 
     let mut terminal = setup_terminal()?;

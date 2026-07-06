@@ -75,7 +75,7 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             Row::Pr(pr) => {
                 let selected = index == app.dashboard.selected;
                 lines.push(pr_line(selected, pr, width));
-                lines.push(branch_line(selected, pr));
+                lines.push(branch_line(selected, pr, app.nerd_fonts()));
                 lines.push(reviewers_line(selected, pr));
             }
             Row::Message(message) => {
@@ -171,7 +171,12 @@ fn render_search_overlay(frame: &mut ratatui::Frame<'_>, app: &App) {
         } else {
             let start = selected.saturating_sub(match_rows.saturating_sub(1));
             for (index, item) in matches.iter().enumerate().skip(start).take(match_rows) {
-                lines.push(search_match_line(index == selected, item, inner_width));
+                lines.push(search_match_line(
+                    index == selected,
+                    item,
+                    inner_width,
+                    app.nerd_fonts(),
+                ));
             }
         }
     }
@@ -197,11 +202,16 @@ fn render_search_overlay(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
 }
 
-fn search_match_line(selected: bool, item: &DashboardSearchMatch, width: usize) -> Line<'static> {
+fn search_match_line(
+    selected: bool,
+    item: &DashboardSearchMatch,
+    width: usize,
+    nerd_fonts: bool,
+) -> Line<'static> {
     let gutter = if selected { "▸" } else { " " };
     let status = pr_status(&item.pr);
     let left = format!("{} #{} {}", item.pr.repo, item.pr.number, item.pr.title);
-    let branch = truncate(&branch_label(&item.pr.head_ref), 24);
+    let branch = truncate(&branch_label(&item.pr.head_ref, nerd_fonts), 24);
     let right = format!("{}  {}", status, item.section);
     let right_width = right.chars().count().min(width.saturating_sub(4));
     let branch_width = if branch.is_empty() {
@@ -233,11 +243,13 @@ fn search_match_line(selected: bool, item: &DashboardSearchMatch, width: usize) 
     ])
 }
 
-fn branch_label(head_ref: &str) -> String {
+fn branch_label(head_ref: &str, nerd_fonts: bool) -> String {
     if head_ref.is_empty() {
         String::new()
-    } else {
+    } else if nerd_fonts {
         format!(" {head_ref}")
+    } else {
+        format!("branch: {head_ref}")
     }
 }
 
@@ -394,7 +406,7 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
     ])
 }
 
-pub(super) fn branch_line(selected: bool, pr: &PullRequest) -> Line<'static> {
+pub(super) fn branch_line(selected: bool, pr: &PullRequest, nerd_fonts: bool) -> Line<'static> {
     let gutter = if selected { "│" } else { " " };
     if pr.head_ref.is_empty() {
         return Line::from(vec![
@@ -407,7 +419,7 @@ pub(super) fn branch_line(selected: bool, pr: &PullRequest) -> Line<'static> {
         Span::styled(gutter, selected_style()),
         Span::raw("       "),
         Span::styled(
-            branch_label(&pr.head_ref),
+            branch_label(&pr.head_ref, nerd_fonts),
             theme::branch().add_modifier(if selected {
                 Modifier::BOLD
             } else {

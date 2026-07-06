@@ -28,6 +28,7 @@ pub struct App {
     pub view: AppView,
     pub detail: DetailState,
     pub loading_frame: usize,
+    nerd_fonts: bool,
     copy_notice: Option<CopyNotice>,
 }
 
@@ -37,7 +38,12 @@ struct CopyNotice {
 }
 
 impl App {
+    #[cfg(test)]
     pub fn new(client: Box<dyn PullRequestSource>) -> Self {
+        Self::with_nerd_fonts(client, false)
+    }
+
+    pub fn with_nerd_fonts(client: Box<dyn PullRequestSource>, nerd_fonts: bool) -> Self {
         Self {
             client,
             dashboard: DashboardState::new(),
@@ -45,8 +51,13 @@ impl App {
             view: AppView::Dashboard,
             detail: DetailState::new(),
             loading_frame: 0,
+            nerd_fonts,
             copy_notice: None,
         }
+    }
+
+    pub fn nerd_fonts(&self) -> bool {
+        self.nerd_fonts
     }
 
     #[cfg(test)]

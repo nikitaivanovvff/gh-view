@@ -6,6 +6,7 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
     pub gh_timeout_seconds: u64,
+    pub nerd_fonts: bool,
 }
 
 impl Config {
@@ -25,6 +26,7 @@ impl Config {
             gh_timeout_seconds: file
                 .gh_timeout_seconds
                 .unwrap_or(DEFAULT_GH_COMMAND_TIMEOUT_SECONDS),
+            nerd_fonts: file.nerd_fonts.unwrap_or(false),
         })
     }
 }
@@ -33,6 +35,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             gh_timeout_seconds: DEFAULT_GH_COMMAND_TIMEOUT_SECONDS,
+            nerd_fonts: false,
         }
     }
 }
@@ -40,6 +43,7 @@ impl Default for Config {
 #[derive(Deserialize)]
 struct ConfigFile {
     gh_timeout_seconds: Option<u64>,
+    nerd_fonts: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -59,5 +63,10 @@ mod tests {
     #[test]
     fn default_timeout_is_thirty_seconds() {
         assert_eq!(Config::default().gh_timeout_seconds, 30);
+    }
+
+    #[test]
+    fn nerd_fonts_default_to_disabled() {
+        assert!(!Config::default().nerd_fonts);
     }
 }

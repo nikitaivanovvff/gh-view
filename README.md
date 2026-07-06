@@ -77,6 +77,10 @@ Optional configuration is read from `~/.config/gh-view/config.toml`.
 # How long gh-view waits for a `gh` command before stopping it.
 # Default: 30 seconds.
 gh_timeout_seconds = 30
+
+# Use Nerd Font glyphs in the UI, such as the branch icon.
+# Default: false.
+nerd_fonts = false
 ```
 
 ## Keybindings
