@@ -149,8 +149,8 @@ cargo run -- --mock
 Release builds are produced by GitHub Actions when a version tag is pushed:
 
 ```sh
-git tag v0.0.1
-git push origin v0.0.1
+git tag v0.0.2
+git push origin v0.0.2
 ```
 
 ## License
