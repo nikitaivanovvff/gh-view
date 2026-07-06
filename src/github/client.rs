@@ -7,11 +7,9 @@ use self::types::{
 };
 use super::{GhError, GhStatus, PullRequestSource};
 use crate::github::command::{GhCommand, command_error};
-use crate::github::source_context::source_context_lines;
 use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, de::DeserializeOwned};
-use std::collections::HashMap;
+use serde::de::DeserializeOwned;
 use std::time::Duration;
 
 const SEARCH_FIELDS: &str = "repository,number,title,author,updatedAt,state,isDraft,url";
@@ -20,7 +18,6 @@ const REVIEW_THREADS_QUERY: &str = r#"
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      headRefOid
       reviewThreads(first: 50) {
         nodes {
           isResolved
@@ -46,12 +43,6 @@ query($owner: String!, $name: String!, $number: Int!) {
 #[derive(Clone)]
 pub struct GhClient {
     command: GhCommand,
-}
-
-#[derive(Debug, Deserialize)]
-struct PullFile {
-    filename: String,
-    patch: Option<String>,
 }
 
 impl GhClient {
@@ -161,62 +152,8 @@ impl GhClient {
 
         let response: ReviewThreadsResponse = serde_json::from_slice(&output.stdout)
             .context("failed to parse gh review threads GraphQL output")?;
-        let head_ref_oid = response.head_ref_oid().to_owned();
-        let file_patches = self
-            .file_patches(owner, name, pr.number)
-            .unwrap_or_default();
-        let mut file_contents: HashMap<String, Option<String>> = HashMap::new();
-        let items = response.into_discussion_items_with_context(|path, line| {
-            let content = file_contents
-                .entry(path.to_owned())
-                .or_insert_with(|| self.file_content(owner, name, &head_ref_oid, path).ok());
-            content.as_deref().map(|content| {
-                source_context_lines(content, line, file_patches.get(path).map(String::as_str))
-            })
-        });
+        let items = response.into_discussion_items();
         Ok(items)
-    }
-
-    fn file_content(&self, owner: &str, name: &str, ref_oid: &str, path: &str) -> Result<String> {
-        let endpoint = format!("repos/{owner}/{name}/contents/{}", encode_path(path));
-        let ref_field = format!("ref={ref_oid}");
-        let output = self.run_gh([
-            "api",
-            &endpoint,
-            "--method",
-            "GET",
-            "-H",
-            "Accept: application/vnd.github.raw",
-            "-f",
-            &ref_field,
-        ])?;
-
-        if !output.status.success() {
-            bail!(GhError::from_command_output(command_error(&output)));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    }
-
-    fn file_patches(
-        &self,
-        owner: &str,
-        name: &str,
-        number: u64,
-    ) -> Result<HashMap<String, String>> {
-        let endpoint = format!("repos/{owner}/{name}/pulls/{number}/files");
-        let output = self.run_gh(["api", &endpoint, "--method", "GET", "-F", "per_page=100"])?;
-
-        if !output.status.success() {
-            bail!(GhError::from_command_output(command_error(&output)));
-        }
-
-        let files: Vec<PullFile> = serde_json::from_slice(&output.stdout)
-            .context("failed to parse gh PR files JSON output")?;
-        Ok(files
-            .into_iter()
-            .filter_map(|file| Some((file.filename, file.patch?)))
-            .collect())
     }
 }
 
@@ -379,25 +316,6 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
         .context("repository name must be in owner/name format")
 }
 
-fn encode_path(path: &str) -> String {
-    path.split('/')
-        .map(encode_path_segment)
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn encode_path_segment(segment: &str) -> String {
-    segment
-        .bytes()
-        .flat_map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                vec![byte as char]
-            }
-            _ => format!("%{byte:02X}").chars().collect(),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,11 +344,5 @@ mod tests {
         assert_eq!(split_repo("owner/name").unwrap(), ("owner", "name"));
         assert!(split_repo("owner").is_err());
         assert!(split_repo("owner/").is_err());
-    }
-
-    #[test]
-    fn encodes_content_api_paths() {
-        assert_eq!(encode_path("src/main.rs"), "src/main.rs");
-        assert_eq!(encode_path("docs/my file#.md"), "docs/my%20file%23.md");
     }
 }

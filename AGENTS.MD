@@ -49,14 +49,13 @@ Use `--mock` for development/demo runs that should not call `gh`. Live runs must
 - `src/model/`: domain models for dashboards, PRs, repository groups, reviewers, checks, comments, discussion items, and code context. Keep GitHub/Ratatui details out of domain models.
 - `src/github/`: GitHub data-source trait, live `gh` client, mock client, command execution, error classification, GraphQL/JSON types, and response parsing. Live code must shell out to user-configured `gh`; do not manage tokens.
 - `src/github/gh/types.rs`: JSON/GraphQL response DTOs and conversion into domain models. Keep parsing tests here.
-- `src/github/source_context.rs`: source-file context windowing and PR patch application for review-thread code context. Keep hunk/patch parsing tests here.
 - `src/ui/`: Ratatui terminal setup, render loop, input handling, dashboard rendering, detail rendering, theme, and text helpers. Keep network/GitHub calls out of rendering code.
 
 Important data flow:
 
 - Dashboard loads should stay bulk-oriented: fetch authored PRs and review-requested PRs together when possible, then normalize into `Dashboard`/`RepoGroup` models.
 - Opening a PR should use a placeholder from dashboard metadata immediately, then load detail and discussion in background workers.
-- Review-thread discussion may load source-file context around the commented line; fall back to GraphQL diff hunks if raw source context is unavailable.
+- Review-thread discussion uses GraphQL diff hunks for code context so it stays fast and matches the exact review-thread snapshot.
 
 ## UI direction
 
