@@ -9,8 +9,7 @@ gh-view is a Rust terminal application for tracking GitHub pull requests. It use
 ## Source of truth
 
 - `README.md`: public project overview and developer commands.
-- `PLAN.md`: local implementation plan; do not commit.
-- `TASKS.md`: local task tracking if created; do not commit.
+- 'docs/specs/': implementation plans
 
 ## Stack
 
@@ -44,8 +43,11 @@ Use `--mock` for development/demo runs that should not call `gh`. Live runs must
 
 - `src/main.rs`: CLI parsing, config loading, top-level command dispatch, and selecting live vs mock data sources.
 - `src/config.rs`: optional user config loading from `~/.config/gh-view/config.toml`.
-- `src/app.rs`: application state, navigation, async dashboard/detail refresh orchestration, background result polling, active detail-pane state, and browser actions. Keep it UI-framework-light and testable.
+- `src/app.rs`: application state, navigation, async dashboard/detail refresh orchestration, background result polling, active detail-pane state, search/detail opening actions, browser actions, and short-lived copy feedback. Keep it UI-framework-light and testable.
+- `src/app/dashboard.rs`: dashboard state, selection, repository collapse state, dashboard search state mutation, and visible-row/search-result coordination.
 - `src/app/rows.rs`: projection from dashboard domain data into visible dashboard rows, including repository expansion state.
+- `src/app/search.rs`: dashboard fuzzy-finder candidate construction and `nucleo-matcher` scoring. Build candidates from loaded dashboard data, not visible rows, so collapsed groups remain searchable.
+- `src/app/status.rs`: app status classification and shared PR status derivation used by UI and search.
 - `src/model/`: domain models for dashboards, PRs, repository groups, reviewers, checks, comments, discussion items, and code context. Keep GitHub/Ratatui details out of domain models.
 - `src/github/`: GitHub data-source trait, live `gh` client, mock client, command execution, error classification, GraphQL/JSON types, and response parsing. Live code must shell out to user-configured `gh`; do not manage tokens.
 - `src/github/gh/types.rs`: JSON/GraphQL response DTOs and conversion into domain models. Keep parsing tests here.
@@ -85,5 +87,5 @@ Important data flow:
 
 ## Git and local files
 
-- Do not commit `PLAN.md` or `TASKS.md`.
+- Feature specs used to hand off work between coding sessions should live under `docs/specs/` and stay untracked unless maintainers explicitly decide to commit them.
 - `AGENTS.MD` may be committed if the maintainers decide agent guidance should travel with the repo; until then, keep it reviewed like source documentation.
