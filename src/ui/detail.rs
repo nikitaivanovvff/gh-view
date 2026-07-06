@@ -5,6 +5,7 @@ use super::text::{
 use super::theme;
 use crate::app::{App, DetailPane, DetailStatus, DiscussionStatus};
 use crate::model::{CodeLineKind, DiscussionItem, DiscussionKind};
+use crate::ui::footer::{FooterItem, footer_lines};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -41,7 +42,10 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         Span::raw("  "),
         Span::styled(format!("{} #{}", pr.repo, pr.number), theme::muted()),
     ]));
-    summary.push(rule_line(width));
+    summary.push(focus_rule_line(
+        width,
+        app.active_detail_pane == DetailPane::Description,
+    ));
     summary.push(Line::from(vec![Span::styled(
         pr.title.clone(),
         theme::normal().add_modifier(Modifier::BOLD),
@@ -53,9 +57,9 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     summary.push(rule_line(width));
 
     if app.detail_status != DetailStatus::Loading {
-        summary.push(Line::styled(
+        summary.push(section_label(
             "DESCRIPTION",
-            theme::muted().add_modifier(Modifier::BOLD),
+            app.active_detail_pane == DetailPane::Description,
         ));
         push_wrapped(
             &mut summary,
@@ -82,25 +86,17 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     render_discussion(frame, chunks[1], app);
 
-    let footer = vec![
-        rule_line(width),
-        Line::from(vec![
-            Span::styled("j/k", theme::muted_key()),
-            Span::styled(format!(" {}   ", active_pane_label(app)), theme::muted()),
-            Span::styled("tab", theme::muted_key()),
-            Span::styled(" switch   ", theme::muted()),
-            Span::styled("d/D", theme::muted_key()),
-            Span::styled(" desc/discussion   ", theme::muted()),
-            Span::styled("n/p", theme::muted_key()),
-            Span::styled(" discussion   ", theme::muted()),
-            Span::styled("esc/q", theme::muted_key()),
-            Span::styled(" back   ", theme::muted()),
-            Span::styled("b", theme::muted_key()),
-            Span::styled(" browser   ", theme::muted()),
-            Span::styled("r", theme::muted_key()),
-            Span::styled(" refresh detail", theme::muted()),
-        ]),
-    ];
+    let footer = footer_lines(
+        width,
+        vec![
+            FooterItem::new("j/k", format!("scroll {}", active_pane_label(app))),
+            FooterItem::new("tab", "switch focus"),
+            FooterItem::new("n/p", "discussion"),
+            FooterItem::new("esc/q", "back"),
+            FooterItem::new("b", "open in browser"),
+            FooterItem::new("r", "refresh detail"),
+        ],
+    );
     frame.render_widget(Paragraph::new(footer), chunks[2]);
 }
 
@@ -119,7 +115,10 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         .split(area);
 
     frame.render_widget(
-        Paragraph::new(vertical_rule_lines(panes[1].height as usize)),
+        Paragraph::new(vertical_rule_lines(
+            panes[1].height as usize,
+            app.active_detail_pane == DetailPane::Discussion,
+        )),
         panes[1],
     );
 
@@ -140,17 +139,35 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
             "  no discussion selected".to_owned()
         };
         let empty = vec![
-            rule_line(panes[0].width as usize),
-            Line::styled("DISCUSSION", theme::muted().add_modifier(Modifier::BOLD)),
-            rule_line(panes[0].width as usize),
+            focus_rule_line(
+                panes[0].width as usize,
+                app.active_detail_pane == DetailPane::Discussion,
+            ),
+            section_label(
+                "DISCUSSION",
+                app.active_detail_pane == DetailPane::Discussion,
+            ),
+            focus_rule_line(
+                panes[0].width as usize,
+                app.active_detail_pane == DetailPane::Discussion,
+            ),
             Line::styled(message, theme::muted()),
         ];
         frame.render_widget(Paragraph::new(empty).style(theme::normal()), panes[0]);
         frame.render_widget(
             Paragraph::new(vec![
-                rule_line(panes[2].width as usize),
-                Line::styled("CODE CONTEXT", theme::muted().add_modifier(Modifier::BOLD)),
-                rule_line(panes[2].width as usize),
+                focus_rule_line(
+                    panes[2].width as usize,
+                    app.active_detail_pane == DetailPane::Discussion,
+                ),
+                section_label(
+                    "CODE CONTEXT",
+                    app.active_detail_pane == DetailPane::Discussion,
+                ),
+                focus_rule_line(
+                    panes[2].width as usize,
+                    app.active_detail_pane == DetailPane::Discussion,
+                ),
                 Line::styled(code_context_message, theme::muted()),
             ])
             .style(theme::normal()),
@@ -165,6 +182,7 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         total,
         panes[0].width as usize,
         &app.discussion_status,
+        app.active_detail_pane == DetailPane::Discussion,
     );
     app.discussion_scroll = app
         .discussion_scroll
@@ -176,7 +194,13 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         panes[0],
     );
     frame.render_widget(
-        Paragraph::new(code_context_lines(item, panes[2].width as usize)).style(theme::normal()),
+        Paragraph::new(code_context_lines(
+            item,
+            panes[2].width as usize,
+            panes[2].height as usize,
+            app.active_detail_pane == DetailPane::Discussion,
+        ))
+        .style(theme::normal()),
         panes[2],
     );
 }
@@ -256,9 +280,31 @@ fn status_line(app: &App) -> Option<Line<'static>> {
     }
 }
 
-fn vertical_rule_lines(height: usize) -> Vec<Line<'static>> {
+fn focus_rule_line(width: usize, focused: bool) -> Line<'static> {
+    if focused {
+        Line::from(Span::styled("─".repeat(width), theme::focus_rule()))
+    } else {
+        rule_line(width)
+    }
+}
+
+fn section_label(label: &'static str, focused: bool) -> Line<'static> {
+    let style = if focused {
+        theme::normal().add_modifier(Modifier::BOLD)
+    } else {
+        theme::muted().add_modifier(Modifier::BOLD)
+    };
+    Line::styled(label, style)
+}
+
+fn vertical_rule_lines(height: usize, focused: bool) -> Vec<Line<'static>> {
+    let style = if focused {
+        theme::focus_rule()
+    } else {
+        theme::rule()
+    };
     (0..height)
-        .map(|_| Line::from(Span::styled("│", theme::rule())))
+        .map(|_| Line::from(Span::styled("│", style)))
         .collect()
 }
 
@@ -268,6 +314,7 @@ fn discussion_lines(
     total: usize,
     width: usize,
     discussion_status: &DiscussionStatus,
+    focused: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut label = match &item.kind {
@@ -279,15 +326,22 @@ fn discussion_lines(
         label.push_str(" · thread load failed");
     }
 
-    lines.push(rule_line(width));
+    lines.push(focus_rule_line(width, focused));
     lines.push(Line::from(vec![
-        Span::styled("DISCUSSION", theme::muted().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "DISCUSSION",
+            if focused {
+                theme::normal().add_modifier(Modifier::BOLD)
+            } else {
+                theme::muted().add_modifier(Modifier::BOLD)
+            },
+        ),
         Span::styled(
             format!("  {}/{}  {}", index + 1, total, label),
             theme::muted(),
         ),
     ]));
-    lines.push(rule_line(width));
+    lines.push(focus_rule_line(width, focused));
     lines.push(Line::from(vec![
         Span::styled(format!("@{}", item.author), theme::reviewer()),
         Span::styled(format!("  {}", age_label(&item.created_at)), theme::muted()),
@@ -310,14 +364,16 @@ fn discussion_lines(
     lines
 }
 
-fn code_context_lines(item: &DiscussionItem, width: usize) -> Vec<Line<'static>> {
+fn code_context_lines(
+    item: &DiscussionItem,
+    width: usize,
+    height: usize,
+    focused: bool,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    lines.push(rule_line(width));
-    lines.push(Line::styled(
-        "CODE CONTEXT",
-        theme::muted().add_modifier(Modifier::BOLD),
-    ));
-    lines.push(rule_line(width));
+    lines.push(focus_rule_line(width, focused));
+    lines.push(section_label("CODE CONTEXT", focused));
+    lines.push(focus_rule_line(width, focused));
 
     let Some(context) = &item.code_context else {
         lines.push(Line::styled(
@@ -337,28 +393,90 @@ fn code_context_lines(item: &DiscussionItem, width: usize) -> Vec<Line<'static>>
         Span::styled(format!("{}{}", context.path, line_hint), theme::muted_key()),
     ]));
 
-    for code in &context.lines {
+    let visible_range = visible_code_line_range(context, height.saturating_sub(lines.len()));
+    let highlighted_index = highlighted_code_line_index(context);
+    for (index, code) in context.lines[visible_range.clone()].iter().enumerate() {
+        let highlighted = highlighted_index == Some(visible_range.start + index);
         let marker = match code.kind {
             CodeLineKind::Added => "+",
             CodeLineKind::Removed => "-",
             CodeLineKind::Context => " ",
         };
-        let style = match code.kind {
+        let mut style = match code.kind {
             CodeLineKind::Added => theme::success(),
             CodeLineKind::Removed => theme::danger(),
             CodeLineKind::Context => theme::normal(),
         };
+        if highlighted {
+            style = style.add_modifier(Modifier::BOLD);
+        }
         let number = code
             .number
             .map(|line| format!("{line:>4}"))
             .unwrap_or_else(|| "    ".to_owned());
+        let gutter = if highlighted { "│" } else { " " };
+        let number_style = if highlighted {
+            theme::focus_rule().add_modifier(Modifier::BOLD)
+        } else {
+            theme::muted()
+        };
+        let line_style = if highlighted {
+            theme::selection()
+        } else {
+            Style::default()
+        };
+        let code_text = truncate(&code.text, width.saturating_sub(9).max(1));
         lines.push(Line::from(vec![
-            Span::styled(format!("{number} {marker} "), theme::muted()),
-            Span::styled(truncate(&code.text, width.saturating_sub(8).max(1)), style),
+            Span::styled(
+                format!("{gutter}{number} {marker} "),
+                number_style.patch(line_style),
+            ),
+            Span::styled(code_text, style.patch(line_style)),
         ]));
     }
 
     lines
+}
+
+fn visible_code_line_range(
+    context: &crate::model::CodeContext,
+    available_height: usize,
+) -> std::ops::Range<usize> {
+    if available_height == 0 || context.lines.len() <= available_height {
+        return 0..context.lines.len();
+    }
+
+    let highlighted_index = highlighted_code_line_index(context).unwrap_or(0);
+    let half = available_height / 2;
+    let start = highlighted_index
+        .saturating_sub(half)
+        .min(context.lines.len().saturating_sub(available_height));
+    start..start + available_height
+}
+
+fn highlighted_code_line_index(context: &crate::model::CodeContext) -> Option<usize> {
+    let highlighted_line = context.highlighted_line?;
+    if let Some(kind) = &context.highlighted_kind
+        && let Some(index) = context
+            .lines
+            .iter()
+            .position(|line| line.number == Some(highlighted_line) && &line.kind == kind)
+    {
+        return Some(index);
+    }
+
+    context
+        .lines
+        .iter()
+        .position(|line| {
+            line.number == Some(highlighted_line) && line.kind != CodeLineKind::Removed
+        })
+        .or_else(|| {
+            context
+                .lines
+                .iter()
+                .position(|line| line.number == Some(highlighted_line))
+        })
 }
 
 fn push_wrapped(
@@ -451,7 +569,7 @@ mod tests {
         let mut app = App::new(Box::new(EmptySource));
 
         assert_eq!(active_pane_label(&app), "description");
-        app.focus_discussion();
+        app.toggle_detail_pane();
         assert_eq!(active_pane_label(&app), "discussion");
     }
 
@@ -470,7 +588,7 @@ mod tests {
 
     #[test]
     fn vertical_rule_lines_matches_requested_height() {
-        let lines = vertical_rule_lines(3);
+        let lines = vertical_rule_lines(3, false);
 
         assert_eq!(lines.len(), 3);
         assert!(lines.iter().all(|line| line.to_string() == "│"));
@@ -511,7 +629,7 @@ mod tests {
             code_context: None,
         };
 
-        let lines = discussion_lines(&item, 0, 1, 80, &DiscussionStatus::Loading);
+        let lines = discussion_lines(&item, 0, 1, 80, &DiscussionStatus::Loading, false);
         let text = lines
             .iter()
             .map(|line| line.to_string())
@@ -536,7 +654,7 @@ mod tests {
             code_context: None,
         };
         assert!(
-            code_context_lines(&item, 80)
+            code_context_lines(&item, 80, 20, false)
                 .iter()
                 .any(|line| line.to_string().contains("no code context"))
         );
@@ -545,6 +663,7 @@ mod tests {
             path: "src/main.rs".to_owned(),
             start_line: Some(10),
             highlighted_line: Some(11),
+            highlighted_kind: None,
             lines: vec![crate::model::CodeContextLine {
                 number: Some(11),
                 kind: CodeLineKind::Added,
@@ -552,12 +671,59 @@ mod tests {
             }],
         });
 
-        let text = code_context_lines(&item, 80)
+        let text = code_context_lines(&item, 80, 20, true)
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains("src/main.rs:11"));
         assert!(text.contains("let value = true;"));
+    }
+
+    #[test]
+    fn visible_code_lines_centers_highlight_when_context_is_taller_than_pane() {
+        let context = crate::model::CodeContext {
+            path: "src/main.rs".to_owned(),
+            start_line: Some(1),
+            highlighted_line: Some(10),
+            highlighted_kind: None,
+            lines: (1..=20)
+                .map(|line| crate::model::CodeContextLine {
+                    number: Some(line),
+                    kind: CodeLineKind::Context,
+                    text: format!("line {line}"),
+                })
+                .collect(),
+        };
+
+        let visible = &context.lines[visible_code_line_range(&context, 7)];
+
+        assert_eq!(visible.first().and_then(|line| line.number), Some(7));
+        assert_eq!(visible.last().and_then(|line| line.number), Some(13));
+        assert!(visible.iter().any(|line| line.number == Some(10)));
+    }
+
+    #[test]
+    fn highlighted_code_line_prefers_removed_side_when_comment_targets_deleted_line() {
+        let context = crate::model::CodeContext {
+            path: "README.md".to_owned(),
+            start_line: Some(98),
+            highlighted_line: Some(102),
+            highlighted_kind: Some(CodeLineKind::Removed),
+            lines: vec![
+                crate::model::CodeContextLine {
+                    number: Some(102),
+                    kind: CodeLineKind::Removed,
+                    text: "removed".to_owned(),
+                },
+                crate::model::CodeContextLine {
+                    number: Some(102),
+                    kind: CodeLineKind::Context,
+                    text: "kept".to_owned(),
+                },
+            ],
+        };
+
+        assert_eq!(highlighted_code_line_index(&context), Some(0));
     }
 }

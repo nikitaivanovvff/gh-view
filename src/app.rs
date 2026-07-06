@@ -360,14 +360,6 @@ impl App {
         }
     }
 
-    pub fn focus_description(&mut self) {
-        self.active_detail_pane = DetailPane::Description;
-    }
-
-    pub fn focus_discussion(&mut self) {
-        self.active_detail_pane = DetailPane::Discussion;
-    }
-
     pub fn toggle_detail_pane(&mut self) {
         self.active_detail_pane = match self.active_detail_pane {
             DetailPane::Description => DetailPane::Discussion,
@@ -934,7 +926,7 @@ mod tests {
         assert_eq!(app.detail_scroll, 1);
         assert_eq!(app.discussion_scroll, 0);
 
-        app.focus_discussion();
+        app.toggle_detail_pane();
         app.scroll_active_down();
         assert_eq!(app.detail_scroll, 1);
         assert_eq!(app.discussion_scroll, 1);
