@@ -7,38 +7,14 @@ use self::types::{
 };
 use super::{GhError, GhStatus, PullRequestSource};
 use crate::github::command::{GhCommand, command_error};
+use crate::github::queries::{
+    DETAIL_FIELDS, REVIEW_THREADS_QUERY, SEARCH_FIELDS, dashboard_query, dashboard_search_query,
+    split_repo,
+};
 use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
-
-const SEARCH_FIELDS: &str = "repository,number,title,author,updatedAt,state,isDraft,url";
-const DETAIL_FIELDS: &str = "number,title,author,updatedAt,isDraft,url,body,state,mergeable,headRefName,baseRefName,reviewDecision,statusCheckRollup,comments,reviews";
-const REVIEW_THREADS_QUERY: &str = r#"
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 50) {
-        nodes {
-          isResolved
-          path
-          line
-          originalLine
-          comments(first: 50) {
-            nodes {
-              author { login }
-              body
-              diffHunk
-              createdAt
-              url
-            }
-          }
-        }
-      }
-    }
-  }
-}
-"#;
 
 #[derive(Clone)]
 pub struct GhClient {
@@ -224,82 +200,6 @@ impl PullRequestSource for GhClient {
     }
 }
 
-fn dashboard_search_query(query: &str) -> String {
-    let escaped_query = query.replace('\\', "\\\\").replace('"', "\\\"");
-    format!(
-        r#"{{
-  search(query: "{escaped_query}", type: ISSUE, first: 50) {{
-    nodes {{
-      ...DashboardPullRequestFields
-    }}
-  }}
-}}
-
-{DASHBOARD_PULL_REQUEST_FRAGMENT}"#
-    )
-}
-
-fn dashboard_query(login: &str) -> String {
-    let my_query = escape_graphql_string(&format!("is:pr is:open author:{login} archived:false"));
-    let review_query = escape_graphql_string(&format!(
-        "is:pr is:open review-requested:{login} archived:false"
-    ));
-    format!(
-        r#"{{
-  myPrs: search(query: "{my_query}", type: ISSUE, first: 50) {{
-    nodes {{
-      ...DashboardPullRequestFields
-    }}
-  }}
-  reviewRequests: search(query: "{review_query}", type: ISSUE, first: 50) {{
-    nodes {{
-      ...DashboardPullRequestFields
-    }}
-  }}
-}}
-
-{DASHBOARD_PULL_REQUEST_FRAGMENT}"#
-    )
-}
-
-fn escape_graphql_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-const DASHBOARD_PULL_REQUEST_FRAGMENT: &str = r#"
-fragment DashboardPullRequestFields on PullRequest {
-  repository { nameWithOwner }
-  number
-  title
-  url
-  isDraft
-  reviewDecision
-  updatedAt
-  author { login }
-  reviews(last: 20) {
-    nodes {
-      author { login __typename }
-      state
-    }
-  }
-  reviewRequests(first: 20) {
-    nodes {
-      requestedReviewer {
-        ... on User { login __typename }
-        ... on Team { name __typename }
-      }
-    }
-  }
-  commits(last: 1) {
-    nodes {
-      commit {
-        statusCheckRollup { state }
-      }
-    }
-  }
-}
-"#;
-
 impl GhClient {
     fn run_gh<I, S>(&self, args: I) -> Result<std::process::Output>
     where
@@ -307,42 +207,5 @@ impl GhClient {
         S: AsRef<str>,
     {
         self.command.run(args)
-    }
-}
-
-fn split_repo(repo: &str) -> Result<(&str, &str)> {
-    repo.split_once('/')
-        .filter(|(owner, name)| !owner.is_empty() && !name.is_empty())
-        .context("repository name must be in owner/name format")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn graphql_string_escaping_handles_quotes_and_backslashes() {
-        assert_eq!(escape_graphql_string(r#"owner\"repo"#), r#"owner\\\"repo"#);
-
-        let query = dashboard_search_query(r#"author:octo\"cat"#);
-        assert!(query.contains(r#"author:octo\\\"cat"#));
-        assert!(query.contains("DashboardPullRequestFields"));
-    }
-
-    #[test]
-    fn dashboard_query_builds_both_dashboard_sections() {
-        let query = dashboard_query(r#"octo\"cat"#);
-
-        assert!(query.contains("myPrs: search"));
-        assert!(query.contains("reviewRequests: search"));
-        assert!(query.contains(r#"author:octo\\\"cat"#));
-        assert!(query.contains(r#"review-requested:octo\\\"cat"#));
-    }
-
-    #[test]
-    fn splits_repo_names() {
-        assert_eq!(split_repo("owner/name").unwrap(), ("owner", "name"));
-        assert!(split_repo("owner").is_err());
-        assert!(split_repo("owner/").is_err());
     }
 }

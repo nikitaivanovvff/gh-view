@@ -2,6 +2,7 @@ mod client;
 mod command;
 mod error;
 mod mock;
+mod queries;
 mod source;
 
 pub use client::GhClient;
