@@ -1,5 +1,8 @@
 use crate::model::{Dashboard, PullRequest, RepoGroup};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[cfg(test)]
+pub(super) const DEFAULT_PRS_PER_REPO_PAGE: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DashboardSection {
@@ -15,6 +18,8 @@ pub enum Row<'a> {
         repo: &'a str,
         count: usize,
         open: bool,
+        page: usize,
+        page_count: usize,
     },
     Pr(&'a PullRequest),
     Message(String),
@@ -48,6 +53,8 @@ pub(super) fn push_groups<'a>(
     section: DashboardSection,
     groups: &'a [RepoGroup],
     collapsed: &BTreeSet<String>,
+    pages: &BTreeMap<String, usize>,
+    page_size: usize,
 ) {
     if groups.is_empty() {
         rows.push(Row::Message("  none".to_owned()));
@@ -55,18 +62,33 @@ pub(super) fn push_groups<'a>(
     }
 
     for group in groups {
-        let open = !collapsed.contains(&group_key(section, &group.repo));
+        let key = group_key(section, &group.repo);
+        let open = !collapsed.contains(&key);
+        let page_count = page_count(group.prs.len(), page_size);
+        let page = pages
+            .get(&key)
+            .copied()
+            .unwrap_or_default()
+            .min(page_count.saturating_sub(1));
         rows.push(Row::Group {
             section,
             repo: &group.repo,
             count: group.prs.len(),
             open,
+            page: page + 1,
+            page_count,
         });
 
         if open {
-            rows.extend(group.prs.iter().map(Row::Pr));
+            let start = page * page_size;
+            let end = (start + page_size).min(group.prs.len());
+            rows.extend(group.prs[start..end].iter().map(Row::Pr));
         }
     }
+}
+
+pub(super) fn page_count(pr_count: usize, page_size: usize) -> usize {
+    pr_count.div_ceil(page_size.max(1)).max(1)
 }
 
 pub(super) fn group_names(dashboard: &Dashboard) -> BTreeSet<String> {
@@ -83,7 +105,7 @@ pub(super) fn group_names(dashboard: &Dashboard) -> BTreeSet<String> {
         .collect()
 }
 
-fn group_key(section: DashboardSection, repo: &str) -> String {
+pub(super) fn group_key(section: DashboardSection, repo: &str) -> String {
     let prefix = match section {
         DashboardSection::MyPrs => "my",
         DashboardSection::AwaitingReview => "review",
@@ -99,7 +121,14 @@ mod tests {
     fn push_groups_adds_placeholder_for_empty_sections() {
         let mut rows = Vec::new();
 
-        push_groups(&mut rows, DashboardSection::MyPrs, &[], &BTreeSet::new());
+        push_groups(
+            &mut rows,
+            DashboardSection::MyPrs,
+            &[],
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            DEFAULT_PRS_PER_REPO_PAGE,
+        );
 
         assert!(matches!(rows.as_slice(), [Row::Message(message)] if message == "  none"));
     }
@@ -120,12 +149,16 @@ mod tests {
             DashboardSection::MyPrs,
             &groups,
             &collapsed,
+            &BTreeMap::new(),
+            DEFAULT_PRS_PER_REPO_PAGE,
         );
         push_groups(
             &mut expanded_rows,
             DashboardSection::AwaitingReview,
             &groups,
             &collapsed,
+            &BTreeMap::new(),
+            DEFAULT_PRS_PER_REPO_PAGE,
         );
 
         assert!(matches!(
@@ -148,6 +181,40 @@ mod tests {
                 Row::Pr(_)
             ]
         ));
+    }
+
+    #[test]
+    fn push_groups_limits_expanded_prs_to_selected_repo_page() {
+        let groups = vec![RepoGroup {
+            repo: "owner/repo".to_owned(),
+            prs: (1..=7).map(|number| pr("owner/repo", number)).collect(),
+        }];
+        let mut pages = BTreeMap::new();
+        pages.insert("my:owner/repo".to_owned(), 1);
+        let mut rows = Vec::new();
+
+        push_groups(
+            &mut rows,
+            DashboardSection::MyPrs,
+            &groups,
+            &BTreeSet::new(),
+            &pages,
+            DEFAULT_PRS_PER_REPO_PAGE,
+        );
+
+        assert!(matches!(
+            rows.first(),
+            Some(Row::Group {
+                page: 2,
+                page_count: 3,
+                ..
+            })
+        ));
+        let numbers: Vec<_> = rows
+            .iter()
+            .filter_map(|row| row.pr().map(|pr| pr.number))
+            .collect();
+        assert_eq!(numbers, vec![4, 5, 6]);
     }
 
     #[test]
@@ -181,6 +248,8 @@ mod tests {
             repo: "owner/repo",
             count: 1,
             open: true,
+            page: 1,
+            page_count: 1,
         };
         let row = Row::Pr(&pr);
         let message = Row::Message("empty".to_owned());

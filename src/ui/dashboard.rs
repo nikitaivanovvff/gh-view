@@ -63,13 +63,20 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 lines.extend(section_lines(title, section_count(&rows, index), width));
             }
             Row::Group {
-                repo, count, open, ..
+                repo,
+                count,
+                open,
+                page,
+                page_count,
+                ..
             } => {
                 lines.push(group_line(
                     index == app.dashboard.selected,
                     repo,
                     *count,
                     *open,
+                    *page,
+                    *page_count,
                 ));
             }
             Row::Pr(pr) => {
@@ -147,6 +154,7 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         FooterItem::new("c", "copy branch"),
         FooterItem::new("b", "open in browser"),
         FooterItem::new("o", "toggle group"),
+        FooterItem::new("n/p", "repo page"),
         FooterItem::new("r", "refresh"),
         FooterItem::new("q", "quit"),
     ];
@@ -372,10 +380,22 @@ pub(super) fn section_lines(title: &str, count: usize, width: usize) -> Vec<Line
     ]
 }
 
-pub(super) fn group_line(selected: bool, repo: &str, count: usize, open: bool) -> Line<'static> {
+pub(super) fn group_line(
+    selected: bool,
+    repo: &str,
+    count: usize,
+    open: bool,
+    page: usize,
+    page_count: usize,
+) -> Line<'static> {
     let marker = if open { "▾" } else { "▸" };
     let gutter = if selected { "▸" } else { " " };
     let pr_label = if count == 1 { "PR" } else { "PRs" };
+    let page_label = if page_count > 1 {
+        format!("   page {page}/{page_count}")
+    } else {
+        String::new()
+    };
 
     Line::from(vec![
         Span::styled(gutter, selected_style()),
@@ -387,6 +407,7 @@ pub(super) fn group_line(selected: bool, repo: &str, count: usize, open: bool) -
             theme::normal().add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("   {count} {pr_label}"), theme::muted()),
+        Span::styled(page_label, theme::accent()),
     ])
 }
 
@@ -530,7 +551,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        let group = group_line(true, "owner/repo", 2, true).to_string();
+        let group = group_line(true, "owner/repo", 2, true, 1, 1).to_string();
         let pr_line = pr_line(true, &pr, 80).to_string();
         let message = message_line(true, "No PRs").to_string();
 
@@ -546,9 +567,23 @@ mod tests {
     #[test]
     fn group_line_uses_singular_pr_label() {
         assert!(
-            group_line(false, "owner/repo", 1, false)
+            group_line(false, "owner/repo", 1, false, 1, 1)
                 .to_string()
                 .contains("1 PR")
+        );
+    }
+
+    #[test]
+    fn group_line_shows_page_label_when_repo_has_multiple_pages() {
+        assert!(
+            group_line(false, "owner/repo", 12, true, 2, 3)
+                .to_string()
+                .contains("page 2/3")
+        );
+        assert!(
+            !group_line(false, "owner/repo", 5, true, 1, 1)
+                .to_string()
+                .contains("page")
         );
     }
 
@@ -595,6 +630,8 @@ mod tests {
                 repo: "owner/a",
                 count: 2,
                 open: true,
+                page: 1,
+                page_count: 1,
             },
             Row::Pr(&pr),
             Row::Section("Awaiting Review"),
@@ -603,6 +640,8 @@ mod tests {
                 repo: "owner/b",
                 count: 3,
                 open: true,
+                page: 1,
+                page_count: 1,
             },
         ];
 
@@ -620,6 +659,8 @@ mod tests {
                 repo: "owner/a",
                 count: 1,
                 open: true,
+                page: 1,
+                page_count: 1,
             },
             Row::Pr(&pr),
             Row::Section("Awaiting Review"),

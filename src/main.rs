@@ -33,7 +33,11 @@ fn main() -> Result<()> {
     let config = config::Config::load()?;
 
     match cli.command.unwrap_or(Commands::Dashboard) {
-        Commands::Dashboard => ui::run(client(cli.mock, &config), config.nerd_fonts),
+        Commands::Dashboard => ui::run(
+            client(cli.mock, &config),
+            config.nerd_fonts,
+            config.dashboard.prs_per_repo_page,
+        ),
         Commands::Doctor => run_doctor(cli.mock, &config),
     }
 }
@@ -54,6 +58,10 @@ fn run_doctor(mock: bool, config: &config::Config) -> Result<()> {
     println!("gh-view doctor");
     println!("Rust CLI is installed and runnable.");
     println!("gh command timeout: {}s", config.gh_timeout_seconds);
+    println!(
+        "dashboard PRs per repo page: {}",
+        config.dashboard.prs_per_repo_page
+    );
 
     if mock {
         println!("Data source: built-in mock data");

@@ -40,13 +40,17 @@ struct CopyNotice {
 impl App {
     #[cfg(test)]
     pub fn new(client: Box<dyn PullRequestSource>) -> Self {
-        Self::with_nerd_fonts(client, false)
+        Self::with_options(client, false, crate::app::rows::DEFAULT_PRS_PER_REPO_PAGE)
     }
 
-    pub fn with_nerd_fonts(client: Box<dyn PullRequestSource>, nerd_fonts: bool) -> Self {
+    pub fn with_options(
+        client: Box<dyn PullRequestSource>,
+        nerd_fonts: bool,
+        dashboard_prs_per_repo_page: usize,
+    ) -> Self {
         Self {
             client,
-            dashboard: DashboardState::new(),
+            dashboard: DashboardState::with_page_size(dashboard_prs_per_repo_page),
             status: AppStatus::Ready,
             view: AppView::Dashboard,
             detail: DetailState::new(),
@@ -130,6 +134,14 @@ impl App {
 
     pub fn toggle_selected_group(&mut self) {
         self.dashboard.toggle_selected_group(&self.status);
+    }
+
+    pub fn next_repo_page(&mut self) {
+        self.dashboard.next_repo_page(&self.status);
+    }
+
+    pub fn previous_repo_page(&mut self) {
+        self.dashboard.previous_repo_page(&self.status);
     }
 
     pub fn open_search(&mut self) {
@@ -685,6 +697,47 @@ mod tests {
         ));
         app.previous();
         assert_eq!(app.dashboard.selected, 0);
+    }
+
+    #[test]
+    fn repo_page_navigation_limits_visible_prs_per_repo() {
+        let mut source = TestSource::ok();
+        source.my_prs = Ok((1..=7).map(|number| pr("owner/repo", number)).collect());
+        source.review_prs = Ok(Vec::new());
+        let mut app = App::new(Box::new(source));
+        app.refresh();
+
+        let numbers: Vec<_> = app
+            .rows()
+            .into_iter()
+            .filter_map(|row| row.pr().map(|pr| pr.number))
+            .collect();
+        assert_eq!(numbers, vec![1, 2, 3]);
+
+        app.next();
+        app.next_repo_page();
+        let rows = app.rows();
+        assert!(matches!(
+            rows.get(app.dashboard.selected),
+            Some(Row::Group {
+                page: 2,
+                page_count: 3,
+                ..
+            })
+        ));
+        let numbers: Vec<_> = rows
+            .into_iter()
+            .filter_map(|row| row.pr().map(|pr| pr.number))
+            .collect();
+        assert_eq!(numbers, vec![4, 5, 6]);
+
+        app.previous_repo_page();
+        let numbers: Vec<_> = app
+            .rows()
+            .into_iter()
+            .filter_map(|row| row.pr().map(|pr| pr.number))
+            .collect();
+        assert_eq!(numbers, vec![1, 2, 3]);
     }
 
     #[test]
