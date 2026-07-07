@@ -80,6 +80,14 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
                 app.toggle_selected_group();
                 true
             }
+            KeyCode::Char('n') | KeyCode::Right => {
+                app.next_repo_page();
+                true
+            }
+            KeyCode::Char('p') | KeyCode::Left => {
+                app.previous_repo_page();
+                true
+            }
             KeyCode::Char('r') => {
                 app.refresh_async();
                 true

@@ -42,7 +42,7 @@ fn group_by_repo(prs: Vec<PullRequest>) -> Vec<RepoGroup> {
     grouped
         .into_iter()
         .map(|(repo, mut prs)| {
-            prs.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            prs.sort_by(|left, right| left.updated_at.cmp(&right.updated_at));
             RepoGroup { repo, prs }
         })
         .collect()
@@ -84,7 +84,7 @@ mod tests {
         assert_eq!(dashboard.my_prs.len(), 2);
         assert_eq!(dashboard.my_prs[0].repo, "owner/a");
         assert_eq!(dashboard.my_prs[1].repo, "owner/b");
-        assert_eq!(dashboard.my_prs[1].prs[0].number, 3);
+        assert_eq!(dashboard.my_prs[1].prs[0].number, 2);
 
         assert_eq!(dashboard.awaiting_review.len(), 2);
         assert_eq!(dashboard.awaiting_review[0].repo, "owner/c");

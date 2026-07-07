@@ -81,6 +81,11 @@ gh_timeout_seconds = 30
 # Use Nerd Font glyphs in the UI, such as the branch icon.
 # Default: false.
 nerd_fonts = false
+
+[dashboard]
+# Number of PRs shown per expanded repository page.
+# Default: 3.
+prs_per_repo_page = 3
 ```
 
 ## Keybindings
@@ -95,6 +100,8 @@ nerd_fonts = false
 | `/` | Search loaded PRs |
 | `c` | Copy selected PR branch name |
 | `space` / `o` | Collapse/expand repository |
+| `n` / `→` | Next page for selected repository |
+| `p` / `←` | Previous page for selected repository |
 | `b` | Open selected PR in browser |
 | `r` | Refresh dashboard |
 | `q` / `esc` | Quit |
@@ -135,7 +142,7 @@ Use mock mode to try the UI without a GitHub account or network calls:
 gh-view --mock
 ```
 
-The mock data includes several repositories, PR review states, CI states, review-thread comments, replies, and code context.
+The mock data includes several repositories, paginated repository groups, PR review states, CI states, review-thread comments, replies, and code context.
 
 ## Development
 
