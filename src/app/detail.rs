@@ -83,6 +83,10 @@ impl DetailState {
         };
     }
 
+    pub fn focus_pane(&mut self, pane: DetailPane) {
+        self.active_pane = pane;
+    }
+
     pub fn next_discussion(&mut self) {
         let Some(detail) = &self.current else {
             return;

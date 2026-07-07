@@ -84,7 +84,14 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         }
     }
 
-    frame.render_widget(Paragraph::new(lines).style(theme::normal()), chunks[0]);
+    app.dashboard
+        .clamp_scroll(max_scroll(lines.len(), chunks[0].height));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme::normal())
+            .scroll((app.dashboard.scroll, 0)),
+        chunks[0],
+    );
     frame.render_widget(
         Paragraph::new(dashboard_footer_lines(app, width)),
         chunks[1],
@@ -92,6 +99,43 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     if app.search_is_open() {
         render_search_overlay(frame, app);
+    }
+}
+
+pub(super) fn row_index_at_screen_line(rows: &[Row<'_>], y: u16, scroll: u16) -> Option<usize> {
+    let mut line = 2usize;
+    let y = y.saturating_add(scroll) as usize;
+
+    for (index, row) in rows.iter().enumerate() {
+        if matches!(row, Row::Section("Awaiting Review")) {
+            if y == line {
+                return None;
+            }
+            line += 1;
+        }
+
+        let height = row_screen_height(row);
+        if y >= line && y < line + height {
+            return match row {
+                Row::Section(_) => None,
+                _ => Some(index),
+            };
+        }
+        line += height;
+    }
+
+    None
+}
+
+fn max_scroll(line_count: usize, visible_height: u16) -> u16 {
+    line_count.saturating_sub(visible_height as usize) as u16
+}
+
+fn row_screen_height(row: &Row<'_>) -> usize {
+    match row {
+        Row::Section(_) => 2,
+        Row::Group { .. } | Row::Message(_) => 1,
+        Row::Pr(_) => 3,
     }
 }
 
@@ -564,6 +608,32 @@ mod tests {
 
         assert_eq!(section_count(&rows, 0), 2);
         assert_eq!(section_count(&rows, 3), 3);
+    }
+
+    #[test]
+    fn row_index_at_screen_line_maps_rendered_dashboard_lines() {
+        let pr = pr();
+        let rows = vec![
+            Row::Section("My PRs"),
+            Row::Group {
+                section: crate::app::DashboardSection::MyPrs,
+                repo: "owner/a",
+                count: 1,
+                open: true,
+            },
+            Row::Pr(&pr),
+            Row::Section("Awaiting Review"),
+            Row::Message("  none".to_owned()),
+        ];
+
+        assert_eq!(row_index_at_screen_line(&rows, 0, 0), None);
+        assert_eq!(row_index_at_screen_line(&rows, 2, 0), None);
+        assert_eq!(row_index_at_screen_line(&rows, 4, 0), Some(1));
+        assert_eq!(row_index_at_screen_line(&rows, 5, 0), Some(2));
+        assert_eq!(row_index_at_screen_line(&rows, 7, 0), Some(2));
+        assert_eq!(row_index_at_screen_line(&rows, 8, 0), None);
+        assert_eq!(row_index_at_screen_line(&rows, 11, 0), Some(4));
+        assert_eq!(row_index_at_screen_line(&rows, 4, 1), Some(2));
     }
 
     fn pr() -> PullRequest {
