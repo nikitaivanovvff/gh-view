@@ -39,23 +39,13 @@ fn group_by_repo(prs: Vec<PullRequest>) -> Vec<RepoGroup> {
         grouped.entry(pr.repo.clone()).or_default().push(pr);
     }
 
-    let mut groups: Vec<RepoGroup> = grouped
+    grouped
         .into_iter()
         .map(|(repo, mut prs)| {
             prs.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
             RepoGroup { repo, prs }
         })
-        .collect();
-
-    groups.sort_by(|left, right| {
-        right
-            .prs
-            .first()
-            .map(|pr| pr.updated_at.as_str())
-            .cmp(&left.prs.first().map(|pr| pr.updated_at.as_str()))
-            .then_with(|| left.repo.cmp(&right.repo))
-    });
-    groups
+        .collect()
 }
 
 #[cfg(test)]
@@ -78,20 +68,27 @@ mod tests {
     }
 
     #[test]
-    fn groups_prs_by_repo_and_sorts_by_newest_pr() {
+    fn groups_prs_by_repo_and_sorts_repositories_alphabetically() {
         let dashboard = Dashboard::from_prs(
             vec![
                 pr("owner/b", 2, "2026-06-02"),
                 pr("owner/a", 1, "2026-06-01"),
                 pr("owner/b", 3, "2026-06-03"),
             ],
-            vec![],
+            vec![
+                pr("owner/d", 4, "2026-06-04"),
+                pr("owner/c", 5, "2026-06-05"),
+            ],
         );
 
         assert_eq!(dashboard.my_prs.len(), 2);
-        assert_eq!(dashboard.my_prs[0].repo, "owner/b");
-        assert_eq!(dashboard.my_prs[0].prs[0].number, 3);
-        assert_eq!(dashboard.my_prs[1].repo, "owner/a");
+        assert_eq!(dashboard.my_prs[0].repo, "owner/a");
+        assert_eq!(dashboard.my_prs[1].repo, "owner/b");
+        assert_eq!(dashboard.my_prs[1].prs[0].number, 3);
+
+        assert_eq!(dashboard.awaiting_review.len(), 2);
+        assert_eq!(dashboard.awaiting_review[0].repo, "owner/c");
+        assert_eq!(dashboard.awaiting_review[1].repo, "owner/d");
     }
 
     #[test]
