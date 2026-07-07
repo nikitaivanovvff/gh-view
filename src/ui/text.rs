@@ -93,29 +93,52 @@ pub(super) fn ci_style(status: Option<&str>) -> Style {
 }
 
 pub(super) fn age_label(updated_at: &str) -> String {
-    if updated_at.starts_with("2026-06-30") {
-        "today".to_owned()
-    } else if updated_at.len() >= 10 {
-        updated_at[5..10].to_owned()
-    } else {
-        "—".to_owned()
-    }
+    let Some(today_days) = current_days() else {
+        return "—".to_owned();
+    };
+
+    age_label_for_day(updated_at, today_days)
 }
 
 pub(super) fn is_stale(updated_at: &str) -> bool {
     let Some(updated_days) = date_days(updated_at) else {
         return false;
     };
-    let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+    let Some(today_days) = current_days() else {
         return false;
     };
-    let today_days = (elapsed.as_secs() / 86_400) as i64;
 
     today_days.saturating_sub(updated_days) >= STALE_DAYS
 }
 
 pub(super) fn selected_style() -> Style {
     theme::accent().add_modifier(Modifier::BOLD)
+}
+
+fn age_label_for_day(updated_at: &str, today_days: i64) -> String {
+    let Some(updated_days) = date_days(updated_at) else {
+        return "—".to_owned();
+    };
+    if updated_days >= today_days {
+        "today".to_owned()
+    } else {
+        duration_label(today_days.saturating_sub(updated_days))
+    }
+}
+
+fn duration_label(days: i64) -> String {
+    if days >= 365 {
+        format!("{}y", days / 365)
+    } else if days >= 30 {
+        format!("{}mo", days / 30)
+    } else {
+        format!("{days}d")
+    }
+}
+
+fn current_days() -> Option<i64> {
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+    Some((elapsed.as_secs() / 86_400) as i64)
 }
 
 fn date_days(value: &str) -> Option<i64> {
@@ -167,9 +190,12 @@ mod tests {
         assert_eq!(ci_text(Some("failing")), "ci×");
         assert_eq!(ci_text(Some("pending")), "ci…");
         assert_eq!(ci_text(None), "ci-");
-        assert_eq!(age_label("2026-06-30T10:00:00Z"), "today");
-        assert_eq!(age_label("2026-07-01T10:00:00Z"), "07-01");
-        assert_eq!(age_label("bad"), "—");
+        let today = date_days("2026-07-07T10:00:00Z").unwrap();
+        assert_eq!(age_label_for_day("2026-07-07T10:00:00Z", today), "today");
+        assert_eq!(age_label_for_day("2026-07-01T10:00:00Z", today), "6d");
+        assert_eq!(age_label_for_day("2026-06-07T10:00:00Z", today), "1mo");
+        assert_eq!(age_label_for_day("2025-07-07T10:00:00Z", today), "1y");
+        assert_eq!(age_label_for_day("bad", today), "—");
     }
 
     #[test]
