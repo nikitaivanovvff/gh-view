@@ -1,7 +1,11 @@
-use crate::app::{App, AppView};
+use super::dashboard::row_index_at_screen_line;
+use crate::app::{App, AppView, DetailPane};
 use crate::github::MockErrorMode;
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use crossterm::terminal;
 
 pub(super) enum InputOutcome {
     Continue(bool),
@@ -11,6 +15,7 @@ pub(super) enum InputOutcome {
 pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> {
     let key = match event {
         Event::Key(key) => key,
+        Event::Mouse(mouse) => return Ok(InputOutcome::Continue(handle_mouse(mouse, app)?)),
         Event::Resize(_, _) => return Ok(InputOutcome::Continue(true)),
         _ => return Ok(InputOutcome::Continue(false)),
     };
@@ -137,6 +142,99 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
     Ok(InputOutcome::Continue(changed))
 }
 
+fn handle_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
+    if app.search_is_open() {
+        return Ok(match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                app.next_search_match();
+                true
+            }
+            MouseEventKind::ScrollUp => {
+                app.previous_search_match();
+                true
+            }
+            _ => false,
+        });
+    }
+
+    let changed = match app.view {
+        AppView::Dashboard => handle_dashboard_mouse(mouse, app),
+        AppView::Detail => handle_detail_mouse(mouse, app)?,
+    };
+
+    Ok(changed)
+}
+
+fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App) -> bool {
+    match mouse.kind {
+        MouseEventKind::ScrollDown => {
+            app.scroll_dashboard_down();
+            true
+        }
+        MouseEventKind::ScrollUp => {
+            app.scroll_dashboard_up();
+            true
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            let rows = app.rows();
+            let Some(index) = row_index_at_screen_line(&rows, mouse.row, app.dashboard.scroll)
+            else {
+                return false;
+            };
+            let opens_selected_pr = index == app.dashboard.selected
+                && matches!(rows.get(index), Some(crate::app::Row::Pr(_)));
+            let toggles_selected_group = index == app.dashboard.selected
+                && matches!(rows.get(index), Some(crate::app::Row::Group { .. }));
+            app.select_dashboard_row(index);
+            if opens_selected_pr {
+                app.open_selected_detail();
+            } else if toggles_selected_group {
+                app.toggle_selected_group();
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn handle_detail_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
+    let Some(pane) = detail_pane_at_row(mouse.row)? else {
+        return Ok(false);
+    };
+
+    match mouse.kind {
+        MouseEventKind::ScrollDown => {
+            app.focus_detail_pane(pane);
+            app.scroll_active_down();
+            Ok(true)
+        }
+        MouseEventKind::ScrollUp => {
+            app.focus_detail_pane(pane);
+            app.scroll_active_up();
+            Ok(true)
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            app.focus_detail_pane(pane);
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn detail_pane_at_row(row: u16) -> Result<Option<DetailPane>> {
+    let (_, height) = terminal::size()?;
+    if height <= 2 || row >= height.saturating_sub(2) {
+        return Ok(None);
+    }
+
+    let description_height = height.saturating_sub(2) / 2;
+    if row < description_height {
+        Ok(Some(DetailPane::Description))
+    } else {
+        Ok(Some(DetailPane::Discussion))
+    }
+}
+
 /// Mock dashboard error controls: 0=ok, 1=GitHub down, 2=timeout, 3=generic error, 4=auth.
 fn mock_error_mode_for_key(key: char) -> Option<Option<MockErrorMode>> {
     match key {
@@ -156,7 +254,7 @@ mod tests {
     use crate::github::{GhStatus, MockErrorMode, MockGhClient, PullRequestSource};
     use crate::model::{PullRequest, PullRequestDetail};
     use anyhow::Result;
-    use crossterm::event::{KeyEvent, KeyEventState, KeyModifiers};
+    use crossterm::event::{KeyEvent, KeyEventState, KeyModifiers, MouseEvent};
 
     #[derive(Clone)]
     struct EmptySource;
@@ -240,6 +338,55 @@ mod tests {
         assert!(matches!(
             key(KeyCode::Char('q'), &mut app),
             InputOutcome::Quit
+        ));
+    }
+
+    #[test]
+    fn dashboard_mouse_wheel_scrolls_and_click_selects_or_opens_rows() {
+        let mut app = App::new(Box::new(MockGhClient::new()));
+        app.refresh();
+
+        assert_continue_changed(mouse(MouseEventKind::ScrollDown, 0, 0, &mut app), true);
+        assert_eq!(app.dashboard.selected, 0);
+        assert_eq!(app.dashboard.scroll, 1);
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 4, 4, &mut app),
+            true,
+        );
+        assert!(matches!(
+            app.rows().get(app.dashboard.selected),
+            Some(crate::app::Row::Pr(_))
+        ));
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 4, 4, &mut app),
+            true,
+        );
+        assert_eq!(app.view, AppView::Detail);
+    }
+
+    #[test]
+    fn dashboard_mouse_second_click_on_group_toggles_collapse() {
+        let mut app = App::new(Box::new(MockGhClient::new()));
+        app.refresh();
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 4, 4, &mut app),
+            true,
+        );
+        assert!(matches!(
+            app.rows().get(app.dashboard.selected),
+            Some(crate::app::Row::Group { open: true, .. })
+        ));
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 4, 4, &mut app),
+            true,
+        );
+        assert!(matches!(
+            app.rows().get(app.dashboard.selected),
+            Some(crate::app::Row::Group { open: false, .. })
         ));
     }
 
@@ -331,6 +478,19 @@ mod tests {
 
     fn ctrl_key(code: KeyCode, app: &mut App) -> InputOutcome {
         handle_event(Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL)), app).unwrap()
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16, app: &mut App) -> InputOutcome {
+        handle_event(
+            Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }),
+            app,
+        )
+        .unwrap()
     }
 
     fn assert_continue_changed(outcome: InputOutcome, expected: bool) {

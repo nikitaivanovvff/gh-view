@@ -12,6 +12,7 @@ pub struct DashboardState {
     pub data: Dashboard,
     pub current_user: Option<String>,
     pub selected: usize,
+    pub scroll: u16,
     pub(super) search: Option<DashboardSearchState>,
     pub loading: bool,
     collapsed_groups: BTreeSet<String>,
@@ -24,6 +25,7 @@ impl DashboardState {
             data: Dashboard::default(),
             current_user: None,
             selected: 0,
+            scroll: 0,
             search: None,
             loading: false,
             collapsed_groups: BTreeSet::new(),
@@ -104,6 +106,23 @@ impl DashboardState {
 
     pub fn previous(&mut self) {
         self.selected = self.selected.saturating_sub(1);
+    }
+
+    pub fn scroll_down(&mut self) {
+        self.scroll = self.scroll.saturating_add(1);
+    }
+
+    pub fn scroll_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(1);
+    }
+
+    pub fn clamp_scroll(&mut self, max_scroll: u16) {
+        self.scroll = self.scroll.min(max_scroll);
+    }
+
+    pub fn select(&mut self, index: usize, status: &AppStatus) {
+        self.selected = index;
+        self.clamp_selection(status);
     }
 
     pub fn toggle_selected_group(&mut self, status: &AppStatus) {

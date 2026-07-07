@@ -3,7 +3,7 @@ use super::render::render;
 use crate::app::App;
 use crate::github::PullRequestSource;
 use anyhow::{Context, Result};
-use crossterm::event;
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -26,13 +26,15 @@ pub fn run(client: Box<dyn PullRequestSource>, nerd_fonts: bool) -> Result<()> {
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode().context("failed to enable raw mode")?;
-    execute!(io::stdout(), EnterAlternateScreen).context("failed to enter alternate screen")?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)
+        .context("failed to enter alternate screen")?;
     Terminal::new(CrosstermBackend::new(io::stdout())).context("failed to create terminal")
 }
 
 fn restore_terminal() -> Result<()> {
     disable_raw_mode().context("failed to disable raw mode")?;
-    execute!(io::stdout(), LeaveAlternateScreen).context("failed to leave alternate screen")
+    execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen)
+        .context("failed to leave alternate screen")
 }
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {

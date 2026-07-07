@@ -116,6 +116,18 @@ impl App {
         self.dashboard.previous();
     }
 
+    pub fn scroll_dashboard_down(&mut self) {
+        self.dashboard.scroll_down();
+    }
+
+    pub fn scroll_dashboard_up(&mut self) {
+        self.dashboard.scroll_up();
+    }
+
+    pub fn select_dashboard_row(&mut self, index: usize) {
+        self.dashboard.select(index, &self.status);
+    }
+
     pub fn toggle_selected_group(&mut self) {
         self.dashboard.toggle_selected_group(&self.status);
     }
@@ -333,6 +345,10 @@ impl App {
 
     pub fn toggle_detail_pane(&mut self) {
         self.detail.toggle_pane();
+    }
+
+    pub fn focus_detail_pane(&mut self, pane: DetailPane) {
+        self.detail.focus_pane(pane);
     }
 
     pub fn next_discussion(&mut self) {
