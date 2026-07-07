@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "gh-view"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "arboard",

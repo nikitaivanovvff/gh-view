@@ -8,6 +8,16 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
 
 > `gh-view` is an independent project and is not affiliated with, endorsed by, or sponsored by GitHub, Inc.
 
+## Screenshots
+
+### Dashboard
+
+![gh-view dashboard mock mode](docs/assets/dashboard-mock.png)
+
+### PR Detail
+
+![gh-view PR detail mock mode](docs/assets/details-mock.png)
+
 ## Features
 
 - Dashboard grouped by repository
@@ -156,8 +166,8 @@ cargo run -- --mock
 Release builds are produced by GitHub Actions when a version tag is pushed:
 
 ```sh
-git tag v0.0.2
-git push origin v0.0.2
+git tag v0.0.3
+git push origin v0.0.3
 ```
 
 ## License
