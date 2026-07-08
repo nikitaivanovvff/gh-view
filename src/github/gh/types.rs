@@ -156,6 +156,8 @@ struct DashboardReviewRequest {
 struct DashboardActor {
     #[serde(default)]
     login: String,
+    #[serde(default)]
+    name: String,
     #[serde(default, rename = "__typename")]
     typename: String,
 }
@@ -329,9 +331,9 @@ impl DashboardSearchPullRequest {
             .nodes
             .iter()
             .filter_map(|request| request.requested_reviewer.as_ref())
-            .filter(|actor| actor.typename != "Bot" && !actor.login.is_empty())
-            .map(|actor| Reviewer {
-                login: actor.login.clone(),
+            .filter_map(DashboardActor::reviewer_name)
+            .map(|login| Reviewer {
+                login,
                 state: ReviewerState::Requested,
             })
             .collect();
@@ -359,7 +361,7 @@ impl DashboardSearchPullRequest {
             .nodes
             .into_iter()
             .filter_map(|request| request.requested_reviewer)
-            .filter(|actor| actor.typename != "Bot" && !actor.login.is_empty())
+            .filter(|actor| actor.typename == "User" && !actor.login.is_empty())
             .map(|actor| actor.login)
             .collect();
 
@@ -382,6 +384,16 @@ impl DashboardSearchPullRequest {
                 .and_then(|rollup| dashboard_check_status(&rollup.state)),
             reviewers,
             review_requested,
+        }
+    }
+}
+
+impl DashboardActor {
+    fn reviewer_name(&self) -> Option<String> {
+        match self.typename.as_str() {
+            "User" if !self.login.is_empty() => Some(self.login.clone()),
+            "Team" if !self.name.is_empty() => Some(self.name.clone()),
+            _ => None,
         }
     }
 }
@@ -754,9 +766,14 @@ mod tests {
                       ]
                     },
                     "reviewRequests": {
-                      "nodes": [{
-                        "requestedReviewer": { "login": "alice", "__typename": "User" }
-                      }]
+                      "nodes": [
+                        {
+                          "requestedReviewer": { "login": "alice", "__typename": "User" }
+                        },
+                        {
+                          "requestedReviewer": { "name": "platform", "__typename": "Team" }
+                        }
+                      ]
                     },
                     "commits": {
                       "nodes": [{
@@ -791,6 +808,10 @@ mod tests {
                 Reviewer {
                     login: "bob".to_owned(),
                     state: ReviewerState::Approved,
+                },
+                Reviewer {
+                    login: "platform".to_owned(),
+                    state: ReviewerState::Requested,
                 }
             ]
         );
@@ -873,6 +894,7 @@ mod tests {
         assert_eq!(reviews[0].repo, "owner/review");
         assert_eq!(reviews[0].head_ref, "review-branch");
         assert_eq!(reviews[0].review_requested, vec!["octocat".to_owned()]);
+        assert_eq!(reviews[0].reviewers[0].login, "octocat");
     }
 
     #[test]

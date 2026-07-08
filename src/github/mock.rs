@@ -128,7 +128,7 @@ impl PullRequestSource for MockGhClient {
                 is_draft: false,
                 review_decision: None,
                 check_status: Some("pending"),
-                reviewers: vec![],
+                reviewers: vec!["core-team"],
             }),
             mock_pr(MockPr {
                 repo: "earendil/gh-view",
