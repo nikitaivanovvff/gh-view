@@ -151,6 +151,7 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         FooterItem::new("j/k", "move"),
         FooterItem::new("enter", "details"),
         FooterItem::new("/", "search"),
+        FooterItem::new("t", "theme"),
         FooterItem::new("c", "copy branch"),
         FooterItem::new("b", "open in browser"),
         FooterItem::new("o", "toggle group"),

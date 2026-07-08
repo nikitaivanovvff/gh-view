@@ -28,8 +28,15 @@ pub struct App {
     pub view: AppView,
     pub detail: DetailState,
     pub loading_frame: usize,
+    pub theme_picker: Option<ThemePickerState>,
+    active_theme: usize,
     nerd_fonts: bool,
     copy_notice: Option<CopyNotice>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThemePickerState {
+    pub selected: usize,
 }
 
 struct CopyNotice {
@@ -40,13 +47,19 @@ struct CopyNotice {
 impl App {
     #[cfg(test)]
     pub fn new(client: Box<dyn PullRequestSource>) -> Self {
-        Self::with_options(client, false, crate::app::rows::DEFAULT_PRS_PER_REPO_PAGE)
+        Self::with_options(
+            client,
+            false,
+            crate::app::rows::DEFAULT_PRS_PER_REPO_PAGE,
+            0,
+        )
     }
 
     pub fn with_options(
         client: Box<dyn PullRequestSource>,
         nerd_fonts: bool,
         dashboard_prs_per_repo_page: usize,
+        active_theme: usize,
     ) -> Self {
         Self {
             client,
@@ -55,6 +68,8 @@ impl App {
             view: AppView::Dashboard,
             detail: DetailState::new(),
             loading_frame: 0,
+            theme_picker: None,
+            active_theme,
             nerd_fonts,
             copy_notice: None,
         }
@@ -146,6 +161,54 @@ impl App {
 
     pub fn open_search(&mut self) {
         self.dashboard.open_search();
+    }
+
+    pub fn open_theme_picker(&mut self) {
+        self.dashboard.close_search();
+        self.theme_picker = Some(ThemePickerState {
+            selected: self.active_theme,
+        });
+    }
+
+    pub fn close_theme_picker(&mut self) {
+        self.theme_picker = None;
+    }
+
+    pub fn theme_picker_is_open(&self) -> bool {
+        self.theme_picker.is_some()
+    }
+
+    pub fn active_theme_index(&self) -> usize {
+        self.active_theme
+    }
+
+    pub fn selected_theme_index(&self) -> usize {
+        self.theme_picker
+            .as_ref()
+            .map(|picker| picker.selected)
+            .unwrap_or(self.active_theme)
+    }
+
+    pub fn next_theme(&mut self, theme_count: usize) {
+        if theme_count == 0 {
+            return;
+        }
+        let Some(picker) = &mut self.theme_picker else {
+            return;
+        };
+        picker.selected = (picker.selected + 1) % theme_count;
+        self.active_theme = picker.selected;
+    }
+
+    pub fn previous_theme(&mut self, theme_count: usize) {
+        if theme_count == 0 {
+            return;
+        }
+        let Some(picker) = &mut self.theme_picker else {
+            return;
+        };
+        picker.selected = picker.selected.checked_sub(1).unwrap_or(theme_count - 1);
+        self.active_theme = picker.selected;
     }
 
     pub fn close_search(&mut self) {

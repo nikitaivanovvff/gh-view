@@ -17,8 +17,14 @@ pub fn run(
     client: Box<dyn PullRequestSource>,
     nerd_fonts: bool,
     dashboard_prs_per_repo_page: usize,
+    theme: &str,
 ) -> Result<()> {
-    let mut app = App::with_options(client, nerd_fonts, dashboard_prs_per_repo_page);
+    let mut app = App::with_options(
+        client,
+        nerd_fonts,
+        dashboard_prs_per_repo_page,
+        super::theme::theme_index(theme),
+    );
     app.refresh_async();
 
     let mut terminal = setup_terminal()?;

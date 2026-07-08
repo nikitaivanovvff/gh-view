@@ -1,4 +1,5 @@
 use super::dashboard::row_index_at_screen_line;
+use super::theme;
 use crate::app::{App, AppView, DetailPane};
 use crate::github::MockErrorMode;
 use anyhow::Result;
@@ -22,6 +23,25 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
 
     if key.kind != KeyEventKind::Press {
         return Ok(InputOutcome::Continue(false));
+    }
+
+    if app.theme_picker_is_open() {
+        let changed = match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                app.close_theme_picker();
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.next_theme(theme::theme_count());
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.previous_theme(theme::theme_count());
+                true
+            }
+            _ => false,
+        };
+        return Ok(InputOutcome::Continue(changed));
     }
 
     let changed = match app.view {
@@ -66,6 +86,10 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
             KeyCode::Char('q') | KeyCode::Esc => return Ok(InputOutcome::Quit),
             KeyCode::Char('/') => {
                 app.open_search();
+                true
+            }
+            KeyCode::Char('t') => {
+                app.open_theme_picker();
                 true
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -151,6 +175,20 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
 }
 
 fn handle_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
+    if app.theme_picker_is_open() {
+        return Ok(match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                app.next_theme(theme::theme_count());
+                true
+            }
+            MouseEventKind::ScrollUp => {
+                app.previous_theme(theme::theme_count());
+                true
+            }
+            _ => false,
+        });
+    }
+
     if app.search_is_open() {
         return Ok(match mouse.kind {
             MouseEventKind::ScrollDown => {
@@ -437,6 +475,23 @@ mod tests {
 
         assert_continue_changed(key(KeyCode::Esc, &mut app), true);
         assert!(!app.search_is_open());
+    }
+
+    #[test]
+    fn dashboard_theme_picker_previews_and_closes() {
+        let mut app = App::new(Box::new(MockGhClient::new()));
+
+        assert_continue_changed(key(KeyCode::Char('t'), &mut app), true);
+        assert!(app.theme_picker_is_open());
+        assert_eq!(app.active_theme_index(), 0);
+
+        assert_continue_changed(key(KeyCode::Char('j'), &mut app), true);
+        assert_eq!(app.selected_theme_index(), 1);
+        assert_eq!(app.active_theme_index(), 1);
+
+        assert_continue_changed(key(KeyCode::Esc, &mut app), true);
+        assert!(!app.theme_picker_is_open());
+        assert_eq!(app.active_theme_index(), 1);
     }
 
     #[test]

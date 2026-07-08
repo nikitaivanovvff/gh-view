@@ -4,12 +4,19 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 const DEFAULT_DASHBOARD_PRS_PER_REPO_PAGE: usize = 3;
+const DEFAULT_THEME: &str = "default";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
     pub gh_timeout_seconds: u64,
     pub nerd_fonts: bool,
+    pub ui: UiConfig,
     pub dashboard: DashboardConfig,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiConfig {
+    pub theme: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,11 +42,15 @@ impl Config {
 
     fn from_file(file: ConfigFile) -> Self {
         let dashboard = file.dashboard.unwrap_or_default();
+        let ui = file.ui.unwrap_or_default();
         Self {
             gh_timeout_seconds: file
                 .gh_timeout_seconds
                 .unwrap_or(DEFAULT_GH_COMMAND_TIMEOUT_SECONDS),
             nerd_fonts: file.nerd_fonts.unwrap_or(false),
+            ui: UiConfig {
+                theme: ui.theme.unwrap_or_else(|| DEFAULT_THEME.to_owned()),
+            },
             dashboard: DashboardConfig {
                 prs_per_repo_page: dashboard
                     .prs_per_repo_page
@@ -55,7 +66,16 @@ impl Default for Config {
         Self {
             gh_timeout_seconds: DEFAULT_GH_COMMAND_TIMEOUT_SECONDS,
             nerd_fonts: false,
+            ui: UiConfig::default(),
             dashboard: DashboardConfig::default(),
+        }
+    }
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            theme: DEFAULT_THEME.to_owned(),
         }
     }
 }
@@ -72,7 +92,13 @@ impl Default for DashboardConfig {
 struct ConfigFile {
     gh_timeout_seconds: Option<u64>,
     nerd_fonts: Option<bool>,
+    ui: Option<UiConfigFile>,
     dashboard: Option<DashboardConfigFile>,
+}
+
+#[derive(Default, Deserialize)]
+struct UiConfigFile {
+    theme: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -105,6 +131,11 @@ mod tests {
     }
 
     #[test]
+    fn ui_theme_defaults_to_default() {
+        assert_eq!(Config::default().ui.theme, "default");
+    }
+
+    #[test]
     fn dashboard_pr_page_size_defaults_to_three() {
         assert_eq!(Config::default().dashboard.prs_per_repo_page, 3);
     }
@@ -115,6 +146,13 @@ mod tests {
             Config::from_file(toml::from_str("[dashboard]\nprs_per_repo_page = 4").unwrap());
 
         assert_eq!(config.dashboard.prs_per_repo_page, 4);
+    }
+
+    #[test]
+    fn parses_ui_theme_from_config_file() {
+        let config = Config::from_file(toml::from_str("[ui]\ntheme = 'catppuccin-mocha'").unwrap());
+
+        assert_eq!(config.ui.theme, "catppuccin-mocha");
     }
 
     #[test]
