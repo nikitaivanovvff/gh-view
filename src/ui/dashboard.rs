@@ -3,7 +3,9 @@ use super::text::{
     selected_style, status_style, truncate,
 };
 use super::theme;
-use crate::app::{App, DashboardErrorLine, DashboardErrorPage, DashboardSearchMatch, Row};
+use crate::app::{
+    App, DashboardErrorLine, DashboardErrorPage, DashboardSearchMatch, DashboardSection, Row,
+};
 use crate::model::PullRequest;
 use crate::ui::footer::{FooterItem, footer_lines};
 use ratatui::layout::Alignment;
@@ -79,11 +81,15 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                     *page_count,
                 ));
             }
-            Row::Pr(pr) => {
+            Row::Pr { section, pr } => {
                 let selected = index == app.dashboard.selected;
                 lines.push(pr_line(selected, pr, width));
                 lines.push(branch_line(selected, pr, app.nerd_fonts()));
-                lines.push(reviewers_line(selected, pr));
+                lines.push(reviewers_line(
+                    selected,
+                    pr,
+                    *section == DashboardSection::MyPrs,
+                ));
             }
             Row::Message(message) => {
                 lines.push(message_line(index == app.dashboard.selected, message));
@@ -142,7 +148,7 @@ fn row_screen_height(row: &Row<'_>) -> usize {
     match row {
         Row::Section(_) => 2,
         Row::Group { .. } | Row::Message(_) => 1,
-        Row::Pr(_) => 3,
+        Row::Pr { .. } => 3,
     }
 }
 
@@ -494,9 +500,13 @@ pub(super) fn branch_line(selected: bool, pr: &PullRequest, nerd_fonts: bool) ->
     ])
 }
 
-pub(super) fn reviewers_line(selected: bool, pr: &PullRequest) -> Line<'static> {
+pub(super) fn reviewers_line(
+    selected: bool,
+    pr: &PullRequest,
+    show_requested: bool,
+) -> Line<'static> {
     let gutter = if selected { "│" } else { " " };
-    if pr.reviewers.is_empty() {
+    if pr.reviewers.is_empty() && (!show_requested || pr.review_requested.is_empty()) {
         return Line::from(vec![
             Span::styled(gutter, selected_style()),
             Span::raw("       "),
@@ -513,6 +523,19 @@ pub(super) fn reviewers_line(selected: bool, pr: &PullRequest) -> Line<'static> 
             format!("@{}", reviewer.login),
             reviewer_style(reviewer.state),
         ));
+    }
+
+    if show_requested && !pr.review_requested.is_empty() {
+        if !pr.reviewers.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled("requested: ", theme::muted()));
+        for (index, requested) in pr.review_requested.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::raw(", "));
+            }
+            spans.push(Span::styled(requested.clone(), theme::info()));
+        }
     }
 
     Line::from(spans)
@@ -605,11 +628,29 @@ mod tests {
             },
         ];
 
-        let line = reviewers_line(false, &pr).to_string();
+        let line = reviewers_line(false, &pr, true).to_string();
 
         assert!(line.contains("@alice"));
         assert!(line.contains("@bob"));
         assert!(line.contains("@carol"));
+    }
+
+    #[test]
+    fn reviewer_line_shows_requested_reviews_only_for_my_prs() {
+        let mut pr = pr();
+        pr.reviewers = Vec::new();
+        pr.review_requested = vec!["org/team".to_owned()];
+
+        assert!(
+            reviewers_line(false, &pr, true)
+                .to_string()
+                .contains("requested: org/team")
+        );
+        assert!(
+            !reviewers_line(false, &pr, false)
+                .to_string()
+                .contains("org/team")
+        );
     }
 
     #[test]
@@ -633,7 +674,10 @@ mod tests {
                 page: 1,
                 page_count: 1,
             },
-            Row::Pr(&pr),
+            Row::Pr {
+                section: crate::app::DashboardSection::MyPrs,
+                pr: &pr,
+            },
             Row::Section("Awaiting Review"),
             Row::Group {
                 section: crate::app::DashboardSection::AwaitingReview,
@@ -662,7 +706,10 @@ mod tests {
                 page: 1,
                 page_count: 1,
             },
-            Row::Pr(&pr),
+            Row::Pr {
+                section: crate::app::DashboardSection::MyPrs,
+                pr: &pr,
+            },
             Row::Section("Awaiting Review"),
             Row::Message("  none".to_owned()),
         ];

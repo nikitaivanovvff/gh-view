@@ -9,7 +9,6 @@ use crate::model::PullRequest;
 use dashboard::DashboardLoad;
 pub use dashboard::DashboardState;
 pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
-#[cfg(test)]
 pub use rows::DashboardSection;
 pub use rows::Row;
 pub use search::DashboardSearchMatch;
@@ -547,12 +546,12 @@ mod tests {
         assert!(
             app.rows()
                 .iter()
-                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+                .any(|row| matches!(row, Row::Pr { pr, .. } if pr.number == 1))
         );
         assert!(
             app.rows()
                 .iter()
-                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+                .any(|row| matches!(row, Row::Pr { pr, .. } if pr.number == 2))
         );
     }
 
@@ -766,7 +765,7 @@ mod tests {
         assert!(
             !app.rows()
                 .iter()
-                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+                .any(|row| matches!(row, Row::Pr { pr, .. } if pr.number == 1))
         );
 
         app.open_search();
