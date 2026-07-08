@@ -613,6 +613,20 @@ mod tests {
     }
 
     #[test]
+    fn reviewer_line_shows_requested_team() {
+        let mut pr = pr();
+        pr.reviewers = vec![crate::model::Reviewer {
+            login: "core-team".to_owned(),
+            state: ReviewerState::Requested,
+        }];
+
+        let line = reviewers_line(false, &pr).to_string();
+
+        assert!(line.contains("@core-team"));
+        assert!(!line.contains("no reviewers"));
+    }
+
+    #[test]
     fn pr_line_marks_stale_pr_age() {
         let mut pr = pr();
         pr.updated_at = "1970-01-01T00:00:00Z".to_owned();
