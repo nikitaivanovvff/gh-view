@@ -218,7 +218,7 @@ impl DashboardState {
     }
 
     pub fn show_loading_screen(&self) -> bool {
-        self.loading && self.data.is_empty()
+        self.loading
     }
 
     pub fn open_search(&mut self) {

@@ -20,6 +20,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const COPY_NOTICE_DURATION: Duration = Duration::from_secs(5);
+const REFRESH_THROTTLE: Duration = Duration::from_secs(1);
 
 pub struct App {
     client: Box<dyn PullRequestSource>,
@@ -28,6 +29,7 @@ pub struct App {
     pub view: AppView,
     pub detail: DetailState,
     pub loading_frame: usize,
+    last_refresh_started_at: Option<Instant>,
     nerd_fonts: bool,
     copy_notice: Option<CopyNotice>,
 }
@@ -55,6 +57,7 @@ impl App {
             view: AppView::Dashboard,
             detail: DetailState::new(),
             loading_frame: 0,
+            last_refresh_started_at: None,
             nerd_fonts,
             copy_notice: None,
         }
@@ -71,9 +74,10 @@ impl App {
     }
 
     pub fn refresh_async(&mut self) {
-        if self.dashboard.loading {
+        if self.dashboard.loading || self.refresh_is_throttled() {
             return;
         }
+        self.mark_refresh_started();
 
         let client = self.client.clone();
         let current_user = self.dashboard.current_user.clone();
@@ -205,6 +209,20 @@ impl App {
         self.open_detail_for_pr(pr);
     }
 
+    pub fn refresh_detail_async(&mut self) {
+        if self.detail_is_loading() || self.refresh_is_throttled() {
+            return;
+        }
+        let Some(pr) = self.detail.current.as_ref().map(|detail| detail.pr.clone()) else {
+            return;
+        };
+
+        self.mark_refresh_started();
+        self.status = AppStatus::Ready;
+        self.start_detail_load(pr.clone());
+        self.start_discussion_load(pr);
+    }
+
     pub fn copy_selected_branch(&mut self) {
         let rows = self.rows();
         let Some(branch) = rows
@@ -247,8 +265,18 @@ impl App {
         self.detail.open_placeholder(pr.clone());
         self.view = AppView::Detail;
         self.status = AppStatus::Ready;
+        self.mark_refresh_started();
         self.start_detail_load(pr.clone());
         self.start_discussion_load(pr);
+    }
+
+    fn refresh_is_throttled(&self) -> bool {
+        self.last_refresh_started_at
+            .is_some_and(|started_at| started_at.elapsed() < REFRESH_THROTTLE)
+    }
+
+    fn mark_refresh_started(&mut self) {
+        self.last_refresh_started_at = Some(Instant::now());
     }
 
     pub fn poll_background(&mut self) -> bool {
@@ -481,6 +509,8 @@ mod tests {
         detail: Result<PullRequestDetail, String>,
         discussion: Result<Vec<DiscussionItem>, String>,
         current_user_calls: Arc<AtomicUsize>,
+        detail_calls: Arc<AtomicUsize>,
+        discussion_calls: Arc<AtomicUsize>,
     }
 
     impl TestSource {
@@ -493,6 +523,8 @@ mod tests {
                 detail: Ok(detail(main_pr)),
                 discussion: Ok(vec![discussion("alice", "2026-07-01T10:00:00Z")]),
                 current_user_calls: Arc::new(AtomicUsize::new(0)),
+                detail_calls: Arc::new(AtomicUsize::new(0)),
+                discussion_calls: Arc::new(AtomicUsize::new(0)),
             }
         }
     }
@@ -524,10 +556,12 @@ mod tests {
         }
 
         fn fetch_pr_detail(&self, _pr: &PullRequest) -> Result<PullRequestDetail> {
+            self.detail_calls.fetch_add(1, Ordering::SeqCst);
             self.detail.clone().map_err(|message| anyhow!(message))
         }
 
         fn fetch_pr_discussion(&self, _pr: &PullRequest) -> Result<Vec<DiscussionItem>> {
+            self.discussion_calls.fetch_add(1, Ordering::SeqCst);
             self.discussion.clone().map_err(|message| anyhow!(message))
         }
     }
@@ -635,7 +669,7 @@ mod tests {
         app.dashboard.loading = false;
         app.refresh();
         app.dashboard.loading = true;
-        assert!(!app.show_dashboard_loading_screen());
+        assert!(app.show_dashboard_loading_screen());
     }
 
     #[test]
@@ -648,6 +682,20 @@ mod tests {
         app.dashboard.loading = true;
         app.advance_loading_frame();
         assert_eq!(app.loading_frame, 1);
+    }
+
+    #[test]
+    fn dashboard_refresh_is_throttled_after_recent_refresh() {
+        let source = TestSource::ok();
+        let calls = source.current_user_calls.clone();
+        let mut app = App::new(Box::new(source));
+
+        app.refresh_async();
+        poll_until_dashboard_ready(&mut app);
+        app.refresh_async();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!app.dashboard.loading);
     }
 
     #[test]
@@ -814,6 +862,28 @@ mod tests {
     }
 
     #[test]
+    fn detail_refresh_reuses_existing_detail_and_is_throttled() {
+        let source = TestSource::ok();
+        let detail_calls = source.detail_calls.clone();
+        let discussion_calls = source.discussion_calls.clone();
+        let mut app = App::new(Box::new(source));
+
+        app.refresh();
+        app.next();
+        app.next();
+        app.open_selected_detail();
+        poll_until_ready(&mut app);
+
+        app.refresh_detail_async();
+
+        assert_eq!(app.detail.current.as_ref().unwrap().body, "Loaded body");
+        assert_eq!(detail_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(discussion_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(app.detail.detail_status, DetailStatus::Ready);
+        assert_eq!(app.detail.discussion_status, DiscussionStatus::Ready);
+    }
+
+    #[test]
     fn detail_load_preserves_dashboard_review_and_check_metadata_when_empty() {
         let mut source = TestSource::ok();
         let mut loaded = detail(pr("owner/repo", 1));
@@ -881,6 +951,18 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("background loads did not finish");
+    }
+
+    fn poll_until_dashboard_ready(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            app.poll_background();
+            if !app.dashboard.loading {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("dashboard load did not finish");
     }
 
     fn pr(repo: &str, number: u64) -> PullRequest {
