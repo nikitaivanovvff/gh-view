@@ -21,10 +21,7 @@ pub enum Row<'a> {
         page: usize,
         page_count: usize,
     },
-    Pr {
-        section: DashboardSection,
-        pr: &'a PullRequest,
-    },
+    Pr(&'a PullRequest),
     Message(String),
 }
 
@@ -38,14 +35,14 @@ impl Row<'_> {
 
     pub(super) fn pr_url(&self) -> Option<&str> {
         match self {
-            Row::Pr { pr, .. } => Some(&pr.url),
+            Row::Pr(pr) => Some(&pr.url),
             _ => None,
         }
     }
 
     pub(super) fn pr(&self) -> Option<&PullRequest> {
         match self {
-            Row::Pr { pr, .. } => Some(pr),
+            Row::Pr(pr) => Some(pr),
             _ => None,
         }
     }
@@ -85,11 +82,7 @@ pub(super) fn push_groups<'a>(
         if open {
             let start = page * page_size;
             let end = (start + page_size).min(group.prs.len());
-            rows.extend(
-                group.prs[start..end]
-                    .iter()
-                    .map(|pr| Row::Pr { section, pr }),
-            );
+            rows.extend(group.prs[start..end].iter().map(Row::Pr));
         }
     }
 }
@@ -184,8 +177,8 @@ mod tests {
                     count: 2,
                     ..
                 },
-                Row::Pr { .. },
-                Row::Pr { .. }
+                Row::Pr(_),
+                Row::Pr(_)
             ]
         ));
     }
@@ -258,10 +251,7 @@ mod tests {
             page: 1,
             page_count: 1,
         };
-        let row = Row::Pr {
-            section: DashboardSection::MyPrs,
-            pr: &pr,
-        };
+        let row = Row::Pr(&pr);
         let message = Row::Message("empty".to_owned());
 
         assert_eq!(group.group_key().as_deref(), Some("review:owner/repo"));

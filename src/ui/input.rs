@@ -190,7 +190,7 @@ fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App) -> bool {
                 return false;
             };
             let opens_selected_pr = index == app.dashboard.selected
-                && matches!(rows.get(index), Some(crate::app::Row::Pr { .. }));
+                && matches!(rows.get(index), Some(crate::app::Row::Pr(_)));
             let toggles_selected_group = index == app.dashboard.selected
                 && matches!(rows.get(index), Some(crate::app::Row::Group { .. }));
             app.select_dashboard_row(index);
@@ -364,7 +364,7 @@ mod tests {
         );
         assert!(matches!(
             app.rows().get(app.dashboard.selected),
-            Some(crate::app::Row::Pr { .. })
+            Some(crate::app::Row::Pr(_))
         ));
 
         assert_continue_changed(
