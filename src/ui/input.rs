@@ -140,7 +140,7 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
                 true
             }
             KeyCode::Char('r') => {
-                app.open_selected_detail();
+                app.refresh_detail_async();
                 true
             }
             _ => false,

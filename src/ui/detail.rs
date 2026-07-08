@@ -270,14 +270,6 @@ fn metadata_line(app: &App, detail: &crate::model::PullRequestDetail) -> Line<'s
 
 fn status_line(app: &App) -> Option<Line<'static>> {
     match (&app.detail.detail_status, &app.detail.discussion_status) {
-        (DetailStatus::Loading, _) => Some(Line::from(vec![
-            Span::styled("refreshing PR details", theme::muted()),
-            Span::styled(loading_dots(app.loading_frame), theme::accent()),
-        ])),
-        (_, DiscussionStatus::Loading) => Some(Line::from(vec![
-            Span::styled("refreshing discussion", theme::muted()),
-            Span::styled(loading_dots(app.loading_frame), theme::accent()),
-        ])),
         (DetailStatus::Error(error), _) => Some(Line::styled(
             format!("could not load PR details: {error}"),
             theme::danger(),
@@ -584,29 +576,15 @@ mod tests {
     }
 
     #[test]
-    fn status_line_reports_loading_and_errors() {
+    fn status_line_reports_errors_without_loading_messages() {
         let mut app = App::new(Box::new(EmptySource));
         assert!(status_line(&app).is_none());
 
         app.detail.detail_status = DetailStatus::Loading;
         app.detail.discussion_status = DiscussionStatus::Loading;
-        assert!(
-            status_line(&app)
-                .unwrap()
-                .to_string()
-                .contains("refreshing PR details")
-        );
-
-        app.detail.detail_status = DetailStatus::Ready;
-        assert!(
-            status_line(&app)
-                .unwrap()
-                .to_string()
-                .contains("refreshing discussion")
-        );
+        assert!(status_line(&app).is_none());
 
         app.detail.detail_status = DetailStatus::Error("boom".to_owned());
-        app.detail.discussion_status = DiscussionStatus::Ready;
         assert!(status_line(&app).unwrap().to_string().contains("boom"));
     }
 
