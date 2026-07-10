@@ -4,12 +4,12 @@ mod rows;
 mod search;
 mod status;
 
+use crate::config::Config;
 use crate::github::{MockErrorMode, PullRequestSource};
 use crate::model::PullRequest;
 use dashboard::DashboardLoad;
 pub use dashboard::DashboardState;
 pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
-#[cfg(test)]
 pub use rows::DashboardSection;
 pub use rows::Row;
 pub use search::DashboardSearchMatch;
@@ -24,13 +24,13 @@ const REFRESH_THROTTLE: Duration = Duration::from_secs(1);
 
 pub struct App {
     client: Box<dyn PullRequestSource>,
+    config: Config,
     pub dashboard: DashboardState,
     pub status: AppStatus,
     pub view: AppView,
     pub detail: DetailState,
     pub loading_frame: usize,
     last_refresh_started_at: Option<Instant>,
-    nerd_fonts: bool,
     copy_notice: Option<CopyNotice>,
 }
 
@@ -40,31 +40,27 @@ struct CopyNotice {
 }
 
 impl App {
-    #[cfg(test)]
-    pub fn new(client: Box<dyn PullRequestSource>) -> Self {
-        Self::with_options(client, false, crate::app::rows::DEFAULT_PRS_PER_REPO_PAGE)
-    }
-
-    pub fn with_options(
-        client: Box<dyn PullRequestSource>,
-        nerd_fonts: bool,
-        dashboard_prs_per_repo_page: usize,
-    ) -> Self {
+    pub fn new(client: Box<dyn PullRequestSource>, config: Config) -> Self {
         Self {
             client,
-            dashboard: DashboardState::with_page_size(dashboard_prs_per_repo_page),
+            config,
+            dashboard: DashboardState::new(),
             status: AppStatus::Ready,
             view: AppView::Dashboard,
             detail: DetailState::new(),
             loading_frame: 0,
             last_refresh_started_at: None,
-            nerd_fonts,
             copy_notice: None,
         }
     }
 
-    pub fn nerd_fonts(&self) -> bool {
-        self.nerd_fonts
+    #[cfg(test)]
+    pub fn with_default_config(client: Box<dyn PullRequestSource>) -> Self {
+        Self::new(client, Config::default())
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     #[cfg(test)]
@@ -97,7 +93,8 @@ impl App {
         self.dashboard.rx = None;
         match result {
             Ok((user, my_prs, reviews)) => {
-                self.dashboard.apply_success(user, my_prs, reviews);
+                self.dashboard
+                    .apply_success(user, my_prs, reviews, &self.config.dashboard);
                 self.status = AppStatus::Ready;
                 self.clamp_selection();
             }
@@ -109,15 +106,16 @@ impl App {
     }
 
     pub fn rows(&self) -> Vec<Row<'_>> {
-        self.dashboard.rows(&self.status)
+        self.dashboard.rows(&self.status, &self.config.dashboard)
     }
 
     pub fn clamp_selection(&mut self) {
-        self.dashboard.clamp_selection(&self.status);
+        self.dashboard
+            .clamp_selection(&self.status, &self.config.dashboard);
     }
 
     pub fn next(&mut self) {
-        self.dashboard.next(&self.status);
+        self.dashboard.next(&self.status, &self.config.dashboard);
     }
 
     pub fn previous(&mut self) {
@@ -133,19 +131,33 @@ impl App {
     }
 
     pub fn select_dashboard_row(&mut self, index: usize) {
-        self.dashboard.select(index, &self.status);
+        self.dashboard
+            .select(index, &self.status, &self.config.dashboard);
     }
 
     pub fn toggle_selected_group(&mut self) {
-        self.dashboard.toggle_selected_group(&self.status);
+        self.dashboard
+            .toggle_selected_group(&self.status, &self.config.dashboard);
     }
 
     pub fn next_repo_page(&mut self) {
-        self.dashboard.next_repo_page(&self.status);
+        self.dashboard
+            .next_repo_page(&self.status, &self.config.dashboard);
     }
 
     pub fn previous_repo_page(&mut self) {
-        self.dashboard.previous_repo_page(&self.status);
+        self.dashboard
+            .previous_repo_page(&self.status, &self.config.dashboard);
+    }
+
+    pub fn show_dashboard_section(&mut self, section: DashboardSection) -> bool {
+        self.dashboard
+            .show_section(section, &self.status, &self.config.dashboard)
+    }
+
+    pub fn cycle_dashboard_section(&mut self) -> bool {
+        self.dashboard
+            .cycle_section(&self.status, &self.config.dashboard)
     }
 
     pub fn open_search(&mut self) {
@@ -192,12 +204,13 @@ impl App {
     }
 
     pub fn open_selected_search_match(&mut self) {
-        let Some(pr) = self.dashboard.selected_search_match().map(|item| item.pr) else {
+        let Some(item) = self.dashboard.selected_search_match() else {
             return;
         };
 
+        self.show_dashboard_section(item.section);
         self.dashboard.close_search();
-        self.open_detail_for_pr(pr);
+        self.open_detail_for_pr(item.pr);
     }
 
     pub fn open_selected_detail(&mut self) {
@@ -529,6 +542,12 @@ mod tests {
         }
     }
 
+    fn separate_views_config() -> Config {
+        let mut config = Config::default();
+        config.dashboard.separate_views = true;
+        config
+    }
+
     impl PullRequestSource for TestSource {
         fn clone_box(&self) -> Box<dyn PullRequestSource> {
             Box::new(self.clone())
@@ -570,7 +589,7 @@ mod tests {
     fn refresh_loads_dashboard_and_caches_current_user() {
         let source = TestSource::ok();
         let calls = source.current_user_calls.clone();
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
         app.refresh();
@@ -591,10 +610,85 @@ mod tests {
     }
 
     #[test]
+    fn separate_dashboard_views_show_only_the_active_section() {
+        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+        app.refresh();
+
+        assert_eq!(app.dashboard.active_section(), DashboardSection::MyPrs);
+        assert!(matches!(app.rows().first(), Some(Row::Section("My PRs"))));
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+        );
+        assert!(
+            !app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+        );
+
+        assert!(app.show_dashboard_section(DashboardSection::AwaitingReview));
+        assert!(matches!(
+            app.rows().first(),
+            Some(Row::Section("Awaiting Review"))
+        ));
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+        );
+        assert!(
+            !app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+        );
+    }
+
+    #[test]
+    fn separate_dashboard_views_preserve_selection_and_scroll() {
+        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+        app.refresh();
+        app.next();
+        app.scroll_dashboard_down();
+        app.scroll_dashboard_down();
+
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+        assert_eq!(app.dashboard.selected, 0);
+        assert_eq!(app.dashboard.scroll, 0);
+        app.next();
+        app.scroll_dashboard_down();
+
+        app.show_dashboard_section(DashboardSection::MyPrs);
+        assert_eq!(app.dashboard.selected, 1);
+        assert_eq!(app.dashboard.scroll, 2);
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+        assert_eq!(app.dashboard.selected, 1);
+        assert_eq!(app.dashboard.scroll, 1);
+    }
+
+    #[test]
+    fn stacked_dashboard_ignores_section_switches() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        app.refresh();
+
+        assert!(!app.show_dashboard_section(DashboardSection::AwaitingReview));
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Section("My PRs")))
+        );
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Section("Awaiting Review")))
+        );
+    }
+
+    #[test]
     fn refresh_classifies_missing_gh_errors() {
         let mut source = TestSource::ok();
         source.current_user = Err("failed to run gh api user".to_owned());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
 
@@ -608,7 +702,7 @@ mod tests {
     fn refresh_classifies_auth_errors() {
         let mut source = TestSource::ok();
         source.current_user = Err("authentication required; run gh auth login".to_owned());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
 
@@ -619,7 +713,7 @@ mod tests {
     fn refresh_classifies_github_outage_errors() {
         let mut source = TestSource::ok();
         source.current_user = Err("HTTP 503 Service Unavailable".to_owned());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
 
@@ -641,7 +735,7 @@ mod tests {
     fn refresh_classifies_timeout_errors() {
         let mut source = TestSource::ok();
         source.current_user = Err("gh command timed out after 30s: gh api graphql".to_owned());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
 
@@ -654,7 +748,7 @@ mod tests {
 
     #[test]
     fn dashboard_loading_screen_is_for_empty_dashboard_loads() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
 
         app.dashboard.loading = true;
         assert!(app.show_dashboard_loading_screen());
@@ -674,7 +768,7 @@ mod tests {
 
     #[test]
     fn loading_frame_advances_only_while_loading() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
 
         app.advance_loading_frame();
         assert_eq!(app.loading_frame, 0);
@@ -688,7 +782,7 @@ mod tests {
     fn dashboard_refresh_is_throttled_after_recent_refresh() {
         let source = TestSource::ok();
         let calls = source.current_user_calls.clone();
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh_async();
         poll_until_dashboard_ready(&mut app);
@@ -703,7 +797,7 @@ mod tests {
         let mut source = TestSource::ok();
         source.my_prs = Ok(vec![pr("owner/shared", 1)]);
         source.review_prs = Ok(vec![pr("owner/shared", 2)]);
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
         app.refresh();
 
         app.next();
@@ -730,7 +824,7 @@ mod tests {
 
     #[test]
     fn navigation_and_group_toggle_update_visible_rows() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
 
         let expanded_count = app.rows().len();
@@ -752,7 +846,7 @@ mod tests {
         let mut source = TestSource::ok();
         source.my_prs = Ok((1..=7).map(|number| pr("owner/repo", number)).collect());
         source.review_prs = Ok(Vec::new());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
         app.refresh();
 
         let numbers: Vec<_> = app
@@ -790,7 +884,7 @@ mod tests {
 
     #[test]
     fn search_open_close_and_query_edit_preserve_dashboard_selection() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.next();
 
@@ -806,7 +900,7 @@ mod tests {
 
     #[test]
     fn search_returns_loaded_prs_even_when_group_is_collapsed() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.next();
         app.toggle_selected_group();
@@ -825,7 +919,7 @@ mod tests {
 
     #[test]
     fn search_selection_clamps_and_opening_match_clears_search() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.open_search();
         app.next_search_match();
@@ -840,8 +934,24 @@ mod tests {
     }
 
     #[test]
+    fn opening_search_match_activates_its_separate_dashboard_section() {
+        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+        app.refresh();
+        app.open_search();
+        app.push_search_char('2');
+
+        app.open_selected_search_match();
+
+        assert_eq!(app.view, AppView::Detail);
+        assert_eq!(
+            app.dashboard.active_section(),
+            DashboardSection::AwaitingReview
+        );
+    }
+
+    #[test]
     fn opening_detail_uses_placeholder_then_background_results() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.next();
         app.next();
@@ -866,7 +976,7 @@ mod tests {
         let source = TestSource::ok();
         let detail_calls = source.detail_calls.clone();
         let discussion_calls = source.discussion_calls.clone();
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
         app.next();
@@ -890,7 +1000,7 @@ mod tests {
         loaded.pr.review_decision = Some(String::new());
         loaded.pr.check_status = Some(String::new());
         source.detail = Ok(loaded);
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
         app.next();
@@ -905,7 +1015,7 @@ mod tests {
 
     #[test]
     fn detail_pane_focus_controls_active_scroll_target() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.scroll_active_down();
         assert_eq!(app.detail.description_scroll, 1);
         assert_eq!(app.detail.discussion_scroll, 0);
@@ -923,7 +1033,7 @@ mod tests {
 
     #[test]
     fn discussion_selection_wraps_and_resets_scroll() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         let mut detail = detail(pr("owner/repo", 1));
         detail.discussion = vec![
             discussion("alice", "2026-07-01T10:00:00Z"),
