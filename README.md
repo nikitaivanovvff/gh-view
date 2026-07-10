@@ -21,7 +21,7 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
 ## Features
 
 - Dashboard grouped by repository
-- Sections for:
+- Dashboard sections, optionally shown as separate full-page views, for:
   - PRs opened by you
   - PRs awaiting your review
 - Compact PR rows with review state, CI state, reviewers, and age
@@ -96,6 +96,10 @@ nerd_fonts = false
 # Number of PRs shown per expanded repository page.
 # Default: 3.
 prs_per_repo_page = 3
+
+# Show My PRs and Awaiting Review as separate full-page dashboard views.
+# Default: false.
+separate_views = false
 ```
 
 ## Keybindings
@@ -106,6 +110,7 @@ prs_per_repo_page = 3
 | --- | --- |
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
+| `1` / `2` / `tab` | Switch dashboard view when `separate_views` is enabled |
 | `enter` | Open selected PR |
 | `/` | Search loaded PRs |
 | `c` | Copy selected PR branch name |

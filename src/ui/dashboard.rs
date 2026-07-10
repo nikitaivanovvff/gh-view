@@ -3,7 +3,9 @@ use super::text::{
     selected_style, status_style, truncate,
 };
 use super::theme;
-use crate::app::{App, DashboardErrorLine, DashboardErrorPage, DashboardSearchMatch, Row};
+use crate::app::{
+    App, DashboardErrorLine, DashboardErrorPage, DashboardSearchMatch, DashboardSection, Row,
+};
 use crate::model::PullRequest;
 use crate::ui::footer::{FooterItem, footer_lines};
 use ratatui::layout::Alignment;
@@ -11,6 +13,8 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+const DASHBOARD_VIEW_GAP: usize = 4;
 
 pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     if app.show_dashboard_loading_screen() {
@@ -57,10 +61,14 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     for (index, row) in rows.iter().enumerate() {
         match row {
             Row::Section(title) => {
-                if *title == "Awaiting Review" {
-                    lines.push(Line::raw(""));
+                if app.config().dashboard.separate_views {
+                    lines.extend(dashboard_view_lines(app, width));
+                } else {
+                    if *title == "Awaiting Review" {
+                        lines.push(Line::raw(""));
+                    }
+                    lines.extend(section_lines(title, section_count(&rows, index), width));
                 }
-                lines.extend(section_lines(title, section_count(&rows, index), width));
             }
             Row::Group {
                 repo,
@@ -82,7 +90,7 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             Row::Pr(pr) => {
                 let selected = index == app.dashboard.selected;
                 lines.push(pr_line(selected, pr, width));
-                lines.push(branch_line(selected, pr, app.nerd_fonts()));
+                lines.push(branch_line(selected, pr, app.config().nerd_fonts));
                 lines.push(reviewers_line(selected, pr));
             }
             Row::Message(message) => {
@@ -109,12 +117,17 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
 }
 
-pub(super) fn row_index_at_screen_line(rows: &[Row<'_>], y: u16, scroll: u16) -> Option<usize> {
+pub(super) fn row_index_at_screen_line(
+    rows: &[Row<'_>],
+    y: u16,
+    scroll: u16,
+    separate_views: bool,
+) -> Option<usize> {
     let mut line = 2usize;
     let y = y.saturating_add(scroll) as usize;
 
     for (index, row) in rows.iter().enumerate() {
-        if matches!(row, Row::Section("Awaiting Review")) {
+        if !separate_views && matches!(row, Row::Section("Awaiting Review")) {
             if y == line {
                 return None;
             }
@@ -134,6 +147,32 @@ pub(super) fn row_index_at_screen_line(rows: &[Row<'_>], y: u16, scroll: u16) ->
     None
 }
 
+pub(super) fn dashboard_section_at_screen_position(
+    app: &App,
+    x: u16,
+    y: u16,
+) -> Option<DashboardSection> {
+    if !app.config().dashboard.separate_views || y.saturating_add(app.dashboard.scroll) != 2 {
+        return None;
+    }
+
+    let x = x as usize;
+    let mut start = 0;
+    for (index, section) in [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
+        .into_iter()
+        .enumerate()
+    {
+        let label = dashboard_view_label(app, section, index);
+        let end = start + label.chars().count();
+        if x >= start && x < end {
+            return Some(section);
+        }
+        start = end + DASHBOARD_VIEW_GAP;
+    }
+
+    None
+}
+
 fn max_scroll(line_count: usize, visible_height: u16) -> u16 {
     line_count.saturating_sub(visible_height as usize) as u16
 }
@@ -147,7 +186,11 @@ fn row_screen_height(row: &Row<'_>) -> usize {
 }
 
 fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
-    let mut items = vec![
+    let mut items = Vec::new();
+    if app.config().dashboard.separate_views {
+        items.push(FooterItem::new("tab", "switch view"));
+    }
+    items.extend([
         FooterItem::new("j/k", "move"),
         FooterItem::new("enter", "details"),
         FooterItem::new("/", "search"),
@@ -157,7 +200,7 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         FooterItem::new("n/p", "repo page"),
         FooterItem::new("r", "refresh"),
         FooterItem::new("q", "quit"),
-    ];
+    ]);
     if let Some(message) = app.status_message() {
         items.push(FooterItem::new("status", message));
     }
@@ -172,11 +215,22 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         items.extend([
             FooterItem::new("mock", format!("[{mode}]")),
             FooterItem::new("0", "ok"),
-            FooterItem::new("1", "down"),
-            FooterItem::new("2", "timeout"),
-            FooterItem::new("3", "error"),
-            FooterItem::new("4", "auth"),
         ]);
+        if app.config().dashboard.separate_views {
+            items.extend([
+                FooterItem::new("5", "down"),
+                FooterItem::new("6", "timeout"),
+                FooterItem::new("7", "error"),
+                FooterItem::new("8", "auth"),
+            ]);
+        } else {
+            items.extend([
+                FooterItem::new("1", "down"),
+                FooterItem::new("2", "timeout"),
+                FooterItem::new("3", "error"),
+                FooterItem::new("4", "auth"),
+            ]);
+        }
     }
     footer_lines(width, items)
 }
@@ -227,7 +281,7 @@ fn render_search_overlay(frame: &mut ratatui::Frame<'_>, app: &App) {
                     index == selected,
                     item,
                     inner_width,
-                    app.nerd_fonts(),
+                    app.config().nerd_fonts,
                 ));
             }
         }
@@ -264,7 +318,7 @@ fn search_match_line(
     let status = pr_status(&item.pr);
     let left = format!("{} #{} {}", item.pr.repo, item.pr.number, item.pr.title);
     let branch = truncate(&branch_label(&item.pr.head_ref, nerd_fonts), 24);
-    let right = format!("{}  {}", status, item.section);
+    let right = format!("{}  {}", status, item.section.title());
     let right_width = right.chars().count().min(width.saturating_sub(4));
     let branch_width = if branch.is_empty() {
         0
@@ -378,6 +432,39 @@ pub(super) fn section_lines(title: &str, count: usize, width: usize) -> Vec<Line
         ]),
         rule_line(width),
     ]
+}
+
+fn dashboard_view_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let active = app.dashboard.active_section();
+    let mut spans = Vec::new();
+    for (index, section) in [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
+        .into_iter()
+        .enumerate()
+    {
+        if index > 0 {
+            spans.push(Span::raw(" ".repeat(DASHBOARD_VIEW_GAP)));
+        }
+        let style = if section == active {
+            theme::accent().add_modifier(Modifier::BOLD)
+        } else {
+            theme::muted()
+        };
+        spans.push(Span::styled(
+            dashboard_view_label(app, section, index),
+            style,
+        ));
+    }
+
+    vec![Line::from(spans), rule_line(width)]
+}
+
+fn dashboard_view_label(app: &App, section: DashboardSection, index: usize) -> String {
+    format!(
+        "{} {} ({})",
+        index + 1,
+        section.title().to_ascii_uppercase(),
+        app.dashboard.section_pr_count(section)
+    )
 }
 
 pub(super) fn group_line(
@@ -681,14 +768,24 @@ mod tests {
             Row::Message("  none".to_owned()),
         ];
 
-        assert_eq!(row_index_at_screen_line(&rows, 0, 0), None);
-        assert_eq!(row_index_at_screen_line(&rows, 2, 0), None);
-        assert_eq!(row_index_at_screen_line(&rows, 4, 0), Some(1));
-        assert_eq!(row_index_at_screen_line(&rows, 5, 0), Some(2));
-        assert_eq!(row_index_at_screen_line(&rows, 7, 0), Some(2));
-        assert_eq!(row_index_at_screen_line(&rows, 8, 0), None);
-        assert_eq!(row_index_at_screen_line(&rows, 11, 0), Some(4));
-        assert_eq!(row_index_at_screen_line(&rows, 4, 1), Some(2));
+        assert_eq!(row_index_at_screen_line(&rows, 0, 0, false), None);
+        assert_eq!(row_index_at_screen_line(&rows, 2, 0, false), None);
+        assert_eq!(row_index_at_screen_line(&rows, 4, 0, false), Some(1));
+        assert_eq!(row_index_at_screen_line(&rows, 5, 0, false), Some(2));
+        assert_eq!(row_index_at_screen_line(&rows, 7, 0, false), Some(2));
+        assert_eq!(row_index_at_screen_line(&rows, 8, 0, false), None);
+        assert_eq!(row_index_at_screen_line(&rows, 11, 0, false), Some(4));
+        assert_eq!(row_index_at_screen_line(&rows, 4, 1, false), Some(2));
+    }
+
+    #[test]
+    fn separate_awaiting_review_view_has_no_stacked_section_gap() {
+        let rows = vec![
+            Row::Section("Awaiting Review"),
+            Row::Message("  none".to_owned()),
+        ];
+
+        assert_eq!(row_index_at_screen_line(&rows, 4, 0, true), Some(1));
     }
 
     fn pr() -> PullRequest {

@@ -1,6 +1,7 @@
 use super::input::{InputOutcome, handle_event};
 use super::render::render;
 use crate::app::App;
+use crate::config::Config;
 use crate::github::PullRequestSource;
 use anyhow::{Context, Result};
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
@@ -13,12 +14,8 @@ use ratatui::backend::CrosstermBackend;
 use std::io;
 use std::time::{Duration, Instant};
 
-pub fn run(
-    client: Box<dyn PullRequestSource>,
-    nerd_fonts: bool,
-    dashboard_prs_per_repo_page: usize,
-) -> Result<()> {
-    let mut app = App::with_options(client, nerd_fonts, dashboard_prs_per_repo_page);
+pub fn run(client: Box<dyn PullRequestSource>, config: Config) -> Result<()> {
+    let mut app = App::new(client, config);
     app.refresh_async();
 
     let mut terminal = setup_terminal()?;

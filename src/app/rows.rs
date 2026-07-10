@@ -48,6 +48,22 @@ impl Row<'_> {
     }
 }
 
+impl DashboardSection {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::MyPrs => "My PRs",
+            Self::AwaitingReview => "Awaiting Review",
+        }
+    }
+
+    pub(super) fn position_index(self) -> usize {
+        match self {
+            Self::MyPrs => 0,
+            Self::AwaitingReview => 1,
+        }
+    }
+}
+
 pub(super) fn push_groups<'a>(
     rows: &mut Vec<Row<'a>>,
     section: DashboardSection,

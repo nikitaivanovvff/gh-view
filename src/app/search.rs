@@ -1,4 +1,5 @@
 use super::pull_request_status;
+use super::rows::DashboardSection;
 use crate::model::{Dashboard, PullRequest, RepoGroup};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -12,12 +13,12 @@ pub struct DashboardSearchState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DashboardSearchMatch {
     pub pr: PullRequest,
-    pub section: &'static str,
+    pub section: DashboardSection,
 }
 
 struct SearchCandidate<'a> {
     pr: &'a PullRequest,
-    section: &'static str,
+    section: DashboardSection,
     text: String,
     order: usize,
 }
@@ -58,10 +59,10 @@ pub(super) fn search_matches(dashboard: &Dashboard, query: &str) -> Vec<Dashboar
 
 fn search_candidates(dashboard: &Dashboard) -> Vec<SearchCandidate<'_>> {
     let mut candidates = Vec::new();
-    push_section_candidates(&mut candidates, "My PRs", &dashboard.my_prs);
+    push_section_candidates(&mut candidates, DashboardSection::MyPrs, &dashboard.my_prs);
     push_section_candidates(
         &mut candidates,
-        "Awaiting Review",
+        DashboardSection::AwaitingReview,
         &dashboard.awaiting_review,
     );
     candidates
@@ -69,7 +70,7 @@ fn search_candidates(dashboard: &Dashboard) -> Vec<SearchCandidate<'_>> {
 
 fn push_section_candidates<'a>(
     candidates: &mut Vec<SearchCandidate<'a>>,
-    section: &'static str,
+    section: DashboardSection,
     groups: &'a [RepoGroup],
 ) {
     for group in groups {
@@ -77,7 +78,7 @@ fn push_section_candidates<'a>(
             candidates.push(SearchCandidate {
                 pr,
                 section,
-                text: candidate_text(section, pr),
+                text: candidate_text(section.title(), pr),
                 order: candidates.len(),
             });
         }
@@ -134,9 +135,9 @@ mod tests {
 
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].pr.number, 1);
-        assert_eq!(matches[0].section, "My PRs");
+        assert_eq!(matches[0].section, DashboardSection::MyPrs);
         assert_eq!(matches[1].pr.number, 2);
-        assert_eq!(matches[1].section, "Awaiting Review");
+        assert_eq!(matches[1].section, DashboardSection::AwaitingReview);
     }
 
     #[test]

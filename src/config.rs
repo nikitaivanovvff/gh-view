@@ -15,6 +15,7 @@ pub struct Config {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DashboardConfig {
     pub prs_per_repo_page: usize,
+    pub separate_views: bool,
 }
 
 impl Config {
@@ -45,6 +46,7 @@ impl Config {
                     .prs_per_repo_page
                     .filter(|page_size| *page_size > 0)
                     .unwrap_or(DEFAULT_DASHBOARD_PRS_PER_REPO_PAGE),
+                separate_views: dashboard.separate_views.unwrap_or(false),
             },
         }
     }
@@ -64,6 +66,7 @@ impl Default for DashboardConfig {
     fn default() -> Self {
         Self {
             prs_per_repo_page: DEFAULT_DASHBOARD_PRS_PER_REPO_PAGE,
+            separate_views: false,
         }
     }
 }
@@ -78,6 +81,7 @@ struct ConfigFile {
 #[derive(Default, Deserialize)]
 struct DashboardConfigFile {
     prs_per_repo_page: Option<usize>,
+    separate_views: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -110,11 +114,24 @@ mod tests {
     }
 
     #[test]
+    fn separate_dashboard_views_default_to_disabled() {
+        assert!(!Config::default().dashboard.separate_views);
+    }
+
+    #[test]
     fn parses_dashboard_pr_page_size_from_config_file() {
         let config =
             Config::from_file(toml::from_str("[dashboard]\nprs_per_repo_page = 4").unwrap());
 
         assert_eq!(config.dashboard.prs_per_repo_page, 4);
+    }
+
+    #[test]
+    fn parses_separate_dashboard_views_from_config_file() {
+        let config =
+            Config::from_file(toml::from_str("[dashboard]\nseparate_views = true").unwrap());
+
+        assert!(config.dashboard.separate_views);
     }
 
     #[test]
