@@ -52,8 +52,6 @@ gh-view doctor
 
 ### Homebrew
 
-Homebrew packaging is coming soon:
-
 ```sh
 brew tap nikitaivanovvff/tap
 brew install gh-view
