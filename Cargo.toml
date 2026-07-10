@@ -1,6 +1,6 @@
 [package]
 name = "gh-view"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 description = "A terminal view for GitHub pull requests"
 license = "MIT"

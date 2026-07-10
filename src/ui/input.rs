@@ -1,6 +1,6 @@
-use super::dashboard::row_index_at_screen_line;
+use super::dashboard::{dashboard_section_at_screen_position, row_index_at_screen_line};
 use super::theme;
-use crate::app::{App, AppView, DetailPane};
+use crate::app::{App, AppView, DashboardSection, DetailPane};
 use crate::github::MockErrorMode;
 use anyhow::Result;
 use crossterm::event::{
@@ -84,6 +84,13 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
         },
         AppView::Dashboard => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(InputOutcome::Quit),
+            KeyCode::Char('1') if app.config().dashboard.separate_views => {
+                app.show_dashboard_section(DashboardSection::MyPrs)
+            }
+            KeyCode::Char('2') if app.config().dashboard.separate_views => {
+                app.show_dashboard_section(DashboardSection::AwaitingReview)
+            }
+            KeyCode::Tab if app.config().dashboard.separate_views => app.cycle_dashboard_section(),
             KeyCode::Char('/') => {
                 app.open_search();
                 true
@@ -116,8 +123,14 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
                 app.refresh_async();
                 true
             }
-            KeyCode::Char(key) if app.is_mock() && mock_error_mode_for_key(key).is_some() => {
-                app.set_mock_error_mode(mock_error_mode_for_key(key).flatten());
+            KeyCode::Char(key)
+                if app.is_mock()
+                    && mock_error_mode_for_key(key, app.config().dashboard.separate_views)
+                        .is_some() =>
+            {
+                app.set_mock_error_mode(
+                    mock_error_mode_for_key(key, app.config().dashboard.separate_views).flatten(),
+                );
                 true
             }
             KeyCode::Char('b') => {
@@ -164,7 +177,7 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
                 true
             }
             KeyCode::Char('r') => {
-                app.open_selected_detail();
+                app.refresh_detail_async();
                 true
             }
             _ => false,
@@ -222,9 +235,19 @@ fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App) -> bool {
             true
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(section) =
+                dashboard_section_at_screen_position(app, mouse.column, mouse.row)
+            {
+                return app.show_dashboard_section(section);
+            }
+
             let rows = app.rows();
-            let Some(index) = row_index_at_screen_line(&rows, mouse.row, app.dashboard.scroll)
-            else {
+            let Some(index) = row_index_at_screen_line(
+                &rows,
+                mouse.row,
+                app.dashboard.scroll,
+                app.config().dashboard.separate_views,
+            ) else {
                 return false;
             };
             let opens_selected_pr = index == app.dashboard.selected
@@ -281,15 +304,28 @@ fn detail_pane_at_row(row: u16) -> Result<Option<DetailPane>> {
     }
 }
 
-/// Mock dashboard error controls: 0=ok, 1=GitHub down, 2=timeout, 3=generic error, 4=auth.
-fn mock_error_mode_for_key(key: char) -> Option<Option<MockErrorMode>> {
-    match key {
-        '0' => Some(None),
-        '1' => Some(Some(MockErrorMode::GitHubDown)),
-        '2' => Some(Some(MockErrorMode::Timeout)),
-        '3' => Some(Some(MockErrorMode::Generic)),
-        '4' => Some(Some(MockErrorMode::Auth)),
-        _ => None,
+fn mock_error_mode_for_key(
+    key: char,
+    separate_dashboard_views: bool,
+) -> Option<Option<MockErrorMode>> {
+    if separate_dashboard_views {
+        match key {
+            '0' => Some(None),
+            '5' => Some(Some(MockErrorMode::GitHubDown)),
+            '6' => Some(Some(MockErrorMode::Timeout)),
+            '7' => Some(Some(MockErrorMode::Generic)),
+            '8' => Some(Some(MockErrorMode::Auth)),
+            _ => None,
+        }
+    } else {
+        match key {
+            '0' => Some(None),
+            '1' => Some(Some(MockErrorMode::GitHubDown)),
+            '2' => Some(Some(MockErrorMode::Timeout)),
+            '3' => Some(Some(MockErrorMode::Generic)),
+            '4' => Some(Some(MockErrorMode::Auth)),
+            _ => None,
+        }
     }
 }
 
@@ -297,6 +333,7 @@ fn mock_error_mode_for_key(key: char) -> Option<Option<MockErrorMode>> {
 mod tests {
     use super::*;
     use crate::app::{DetailPane, DetailStatus};
+    use crate::config::Config;
     use crate::github::{GhStatus, MockErrorMode, MockGhClient, PullRequestSource};
     use crate::model::{PullRequest, PullRequestDetail};
     use anyhow::Result;
@@ -342,9 +379,15 @@ mod tests {
         }
     }
 
+    fn separate_views_config() -> Config {
+        let mut config = Config::default();
+        config.dashboard.separate_views = true;
+        config
+    }
+
     #[test]
     fn resize_requests_redraw_and_key_release_is_ignored() {
-        let mut app = App::new(Box::new(EmptySource));
+        let mut app = App::with_default_config(Box::new(EmptySource));
 
         assert_continue_changed(
             handle_event(Event::Resize(120, 40), &mut app).unwrap(),
@@ -367,7 +410,7 @@ mod tests {
 
     #[test]
     fn dashboard_keys_navigate_toggle_groups_and_quit() {
-        let mut app = App::new(Box::new(MockGhClient::new()));
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
         assert_continue_changed(key(KeyCode::Char('j'), &mut app), true);
@@ -388,8 +431,47 @@ mod tests {
     }
 
     #[test]
+    fn separate_dashboard_view_keys_switch_sections() {
+        let mut app = App::new(Box::new(MockGhClient::new()), separate_views_config());
+        app.refresh();
+
+        assert_continue_changed(key(KeyCode::Char('2'), &mut app), true);
+        assert_eq!(
+            app.dashboard.active_section(),
+            DashboardSection::AwaitingReview
+        );
+        assert_eq!(app.mock_error_mode(), None);
+
+        assert_continue_changed(key(KeyCode::Char('5'), &mut app), true);
+        assert_eq!(app.mock_error_mode(), Some(MockErrorMode::GitHubDown));
+        assert_continue_changed(key(KeyCode::Char('0'), &mut app), true);
+        assert_eq!(app.mock_error_mode(), None);
+
+        assert_continue_changed(key(KeyCode::Char('1'), &mut app), true);
+        assert_eq!(app.dashboard.active_section(), DashboardSection::MyPrs);
+
+        assert_continue_changed(key(KeyCode::Tab, &mut app), true);
+        assert_eq!(
+            app.dashboard.active_section(),
+            DashboardSection::AwaitingReview
+        );
+    }
+
+    #[test]
+    fn search_captures_dashboard_view_keys() {
+        let mut app = App::new(Box::new(MockGhClient::new()), separate_views_config());
+        app.refresh();
+        app.open_search();
+
+        assert_continue_changed(key(KeyCode::Char('2'), &mut app), true);
+
+        assert_eq!(app.search_query(), Some("2"));
+        assert_eq!(app.dashboard.active_section(), DashboardSection::MyPrs);
+    }
+
+    #[test]
     fn dashboard_mouse_wheel_scrolls_and_click_selects_or_opens_rows() {
-        let mut app = App::new(Box::new(MockGhClient::new()));
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
         assert_continue_changed(mouse(MouseEventKind::ScrollDown, 0, 0, &mut app), true);
@@ -413,8 +495,34 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_tab_clicks_switch_separate_views() {
+        let mut app = App::new(Box::new(MockGhClient::new()), separate_views_config());
+        app.refresh();
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 20, 2, &mut app),
+            true,
+        );
+        assert_eq!(
+            app.dashboard.active_section(),
+            DashboardSection::AwaitingReview
+        );
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 2, &mut app),
+            true,
+        );
+        assert_eq!(app.dashboard.active_section(), DashboardSection::MyPrs);
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 2, &mut app),
+            false,
+        );
+    }
+
+    #[test]
     fn dashboard_mouse_second_click_on_group_toggles_collapse() {
-        let mut app = App::new(Box::new(MockGhClient::new()));
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
         assert_continue_changed(
@@ -438,21 +546,21 @@ mod tests {
 
     #[test]
     fn mock_error_keys_are_mock_only() {
-        let mut mock_app = App::new(Box::new(MockGhClient::new()));
+        let mut mock_app = App::with_default_config(Box::new(MockGhClient::new()));
 
         assert_continue_changed(key(KeyCode::Char('1'), &mut mock_app), true);
         assert_eq!(mock_app.mock_error_mode(), Some(MockErrorMode::GitHubDown));
         assert_continue_changed(key(KeyCode::Char('0'), &mut mock_app), true);
         assert_eq!(mock_app.mock_error_mode(), None);
 
-        let mut live_like_app = App::new(Box::new(EmptySource));
+        let mut live_like_app = App::with_default_config(Box::new(EmptySource));
         assert_continue_changed(key(KeyCode::Char('1'), &mut live_like_app), false);
         assert_eq!(live_like_app.mock_error_mode(), None);
     }
 
     #[test]
     fn mock_error_keys_replace_active_mock_load() {
-        let mut app = App::new(Box::new(MockGhClient::new()));
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.dashboard.loading = true;
 
         assert_continue_changed(key(KeyCode::Char('1'), &mut app), true);
@@ -463,7 +571,7 @@ mod tests {
 
     #[test]
     fn dashboard_slash_opens_search_and_search_captures_shortcuts() {
-        let mut app = App::new(Box::new(MockGhClient::new()));
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
         assert_continue_changed(key(KeyCode::Char('/'), &mut app), true);
@@ -479,7 +587,7 @@ mod tests {
 
     #[test]
     fn dashboard_theme_picker_previews_and_closes() {
-        let mut app = App::new(Box::new(MockGhClient::new()));
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
 
         assert_continue_changed(key(KeyCode::Char('t'), &mut app), true);
         assert!(app.theme_picker_is_open());
@@ -496,7 +604,7 @@ mod tests {
 
     #[test]
     fn search_keys_move_backspace_and_open_match() {
-        let mut app = App::new(Box::new(MockGhClient::new()));
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
         app.open_search();
 
@@ -516,7 +624,7 @@ mod tests {
 
     #[test]
     fn detail_keys_switch_panes_scroll_and_return_to_dashboard() {
-        let mut app = App::new(Box::new(EmptySource));
+        let mut app = App::with_default_config(Box::new(EmptySource));
         app.view = AppView::Detail;
 
         assert_continue_changed(key(KeyCode::Tab, &mut app), true);

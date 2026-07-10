@@ -4,12 +4,12 @@ mod rows;
 mod search;
 mod status;
 
+use crate::config::Config;
 use crate::github::{MockErrorMode, PullRequestSource};
 use crate::model::PullRequest;
 use dashboard::DashboardLoad;
 pub use dashboard::DashboardState;
 pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
-#[cfg(test)]
 pub use rows::DashboardSection;
 pub use rows::Row;
 pub use search::DashboardSearchMatch;
@@ -20,9 +20,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const COPY_NOTICE_DURATION: Duration = Duration::from_secs(5);
+const REFRESH_THROTTLE: Duration = Duration::from_secs(1);
 
 pub struct App {
     client: Box<dyn PullRequestSource>,
+    config: Config,
     pub dashboard: DashboardState,
     pub status: AppStatus,
     pub view: AppView,
@@ -30,7 +32,7 @@ pub struct App {
     pub loading_frame: usize,
     pub theme_picker: Option<ThemePickerState>,
     active_theme: usize,
-    nerd_fonts: bool,
+    last_refresh_started_at: Option<Instant>,
     copy_notice: Option<CopyNotice>,
 }
 
@@ -46,37 +48,37 @@ struct CopyNotice {
 
 impl App {
     #[cfg(test)]
-    pub fn new(client: Box<dyn PullRequestSource>) -> Self {
-        Self::with_options(
-            client,
-            false,
-            crate::app::rows::DEFAULT_PRS_PER_REPO_PAGE,
-            0,
-        )
+    pub fn new(client: Box<dyn PullRequestSource>, config: Config) -> Self {
+        Self::with_active_theme(client, config, 0)
     }
 
-    pub fn with_options(
+    pub fn with_active_theme(
         client: Box<dyn PullRequestSource>,
-        nerd_fonts: bool,
-        dashboard_prs_per_repo_page: usize,
+        config: Config,
         active_theme: usize,
     ) -> Self {
         Self {
             client,
-            dashboard: DashboardState::with_page_size(dashboard_prs_per_repo_page),
+            config,
+            dashboard: DashboardState::new(),
             status: AppStatus::Ready,
             view: AppView::Dashboard,
             detail: DetailState::new(),
             loading_frame: 0,
             theme_picker: None,
             active_theme,
-            nerd_fonts,
+            last_refresh_started_at: None,
             copy_notice: None,
         }
     }
 
-    pub fn nerd_fonts(&self) -> bool {
-        self.nerd_fonts
+    #[cfg(test)]
+    pub fn with_default_config(client: Box<dyn PullRequestSource>) -> Self {
+        Self::new(client, Config::default())
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     #[cfg(test)]
@@ -86,9 +88,10 @@ impl App {
     }
 
     pub fn refresh_async(&mut self) {
-        if self.dashboard.loading {
+        if self.dashboard.loading || self.refresh_is_throttled() {
             return;
         }
+        self.mark_refresh_started();
 
         let client = self.client.clone();
         let current_user = self.dashboard.current_user.clone();
@@ -108,7 +111,8 @@ impl App {
         self.dashboard.rx = None;
         match result {
             Ok((user, my_prs, reviews)) => {
-                self.dashboard.apply_success(user, my_prs, reviews);
+                self.dashboard
+                    .apply_success(user, my_prs, reviews, &self.config.dashboard);
                 self.status = AppStatus::Ready;
                 self.clamp_selection();
             }
@@ -120,15 +124,16 @@ impl App {
     }
 
     pub fn rows(&self) -> Vec<Row<'_>> {
-        self.dashboard.rows(&self.status)
+        self.dashboard.rows(&self.status, &self.config.dashboard)
     }
 
     pub fn clamp_selection(&mut self) {
-        self.dashboard.clamp_selection(&self.status);
+        self.dashboard
+            .clamp_selection(&self.status, &self.config.dashboard);
     }
 
     pub fn next(&mut self) {
-        self.dashboard.next(&self.status);
+        self.dashboard.next(&self.status, &self.config.dashboard);
     }
 
     pub fn previous(&mut self) {
@@ -144,19 +149,33 @@ impl App {
     }
 
     pub fn select_dashboard_row(&mut self, index: usize) {
-        self.dashboard.select(index, &self.status);
+        self.dashboard
+            .select(index, &self.status, &self.config.dashboard);
     }
 
     pub fn toggle_selected_group(&mut self) {
-        self.dashboard.toggle_selected_group(&self.status);
+        self.dashboard
+            .toggle_selected_group(&self.status, &self.config.dashboard);
     }
 
     pub fn next_repo_page(&mut self) {
-        self.dashboard.next_repo_page(&self.status);
+        self.dashboard
+            .next_repo_page(&self.status, &self.config.dashboard);
     }
 
     pub fn previous_repo_page(&mut self) {
-        self.dashboard.previous_repo_page(&self.status);
+        self.dashboard
+            .previous_repo_page(&self.status, &self.config.dashboard);
+    }
+
+    pub fn show_dashboard_section(&mut self, section: DashboardSection) -> bool {
+        self.dashboard
+            .show_section(section, &self.status, &self.config.dashboard)
+    }
+
+    pub fn cycle_dashboard_section(&mut self) -> bool {
+        self.dashboard
+            .cycle_section(&self.status, &self.config.dashboard)
     }
 
     pub fn open_search(&mut self) {
@@ -251,12 +270,13 @@ impl App {
     }
 
     pub fn open_selected_search_match(&mut self) {
-        let Some(pr) = self.dashboard.selected_search_match().map(|item| item.pr) else {
+        let Some(item) = self.dashboard.selected_search_match() else {
             return;
         };
 
+        self.show_dashboard_section(item.section);
         self.dashboard.close_search();
-        self.open_detail_for_pr(pr);
+        self.open_detail_for_pr(item.pr);
     }
 
     pub fn open_selected_detail(&mut self) {
@@ -266,6 +286,20 @@ impl App {
         };
 
         self.open_detail_for_pr(pr);
+    }
+
+    pub fn refresh_detail_async(&mut self) {
+        if self.detail_is_loading() || self.refresh_is_throttled() {
+            return;
+        }
+        let Some(pr) = self.detail.current.as_ref().map(|detail| detail.pr.clone()) else {
+            return;
+        };
+
+        self.mark_refresh_started();
+        self.status = AppStatus::Ready;
+        self.start_detail_load(pr.clone());
+        self.start_discussion_load(pr);
     }
 
     pub fn copy_selected_branch(&mut self) {
@@ -310,8 +344,18 @@ impl App {
         self.detail.open_placeholder(pr.clone());
         self.view = AppView::Detail;
         self.status = AppStatus::Ready;
+        self.mark_refresh_started();
         self.start_detail_load(pr.clone());
         self.start_discussion_load(pr);
+    }
+
+    fn refresh_is_throttled(&self) -> bool {
+        self.last_refresh_started_at
+            .is_some_and(|started_at| started_at.elapsed() < REFRESH_THROTTLE)
+    }
+
+    fn mark_refresh_started(&mut self) {
+        self.last_refresh_started_at = Some(Instant::now());
     }
 
     pub fn poll_background(&mut self) -> bool {
@@ -544,6 +588,8 @@ mod tests {
         detail: Result<PullRequestDetail, String>,
         discussion: Result<Vec<DiscussionItem>, String>,
         current_user_calls: Arc<AtomicUsize>,
+        detail_calls: Arc<AtomicUsize>,
+        discussion_calls: Arc<AtomicUsize>,
     }
 
     impl TestSource {
@@ -556,8 +602,16 @@ mod tests {
                 detail: Ok(detail(main_pr)),
                 discussion: Ok(vec![discussion("alice", "2026-07-01T10:00:00Z")]),
                 current_user_calls: Arc::new(AtomicUsize::new(0)),
+                detail_calls: Arc::new(AtomicUsize::new(0)),
+                discussion_calls: Arc::new(AtomicUsize::new(0)),
             }
         }
+    }
+
+    fn separate_views_config() -> Config {
+        let mut config = Config::default();
+        config.dashboard.separate_views = true;
+        config
     }
 
     impl PullRequestSource for TestSource {
@@ -587,10 +641,12 @@ mod tests {
         }
 
         fn fetch_pr_detail(&self, _pr: &PullRequest) -> Result<PullRequestDetail> {
+            self.detail_calls.fetch_add(1, Ordering::SeqCst);
             self.detail.clone().map_err(|message| anyhow!(message))
         }
 
         fn fetch_pr_discussion(&self, _pr: &PullRequest) -> Result<Vec<DiscussionItem>> {
+            self.discussion_calls.fetch_add(1, Ordering::SeqCst);
             self.discussion.clone().map_err(|message| anyhow!(message))
         }
     }
@@ -599,7 +655,7 @@ mod tests {
     fn refresh_loads_dashboard_and_caches_current_user() {
         let source = TestSource::ok();
         let calls = source.current_user_calls.clone();
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
         app.refresh();
@@ -620,10 +676,85 @@ mod tests {
     }
 
     #[test]
+    fn separate_dashboard_views_show_only_the_active_section() {
+        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+        app.refresh();
+
+        assert_eq!(app.dashboard.active_section(), DashboardSection::MyPrs);
+        assert!(matches!(app.rows().first(), Some(Row::Section("My PRs"))));
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+        );
+        assert!(
+            !app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+        );
+
+        assert!(app.show_dashboard_section(DashboardSection::AwaitingReview));
+        assert!(matches!(
+            app.rows().first(),
+            Some(Row::Section("Awaiting Review"))
+        ));
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+        );
+        assert!(
+            !app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+        );
+    }
+
+    #[test]
+    fn separate_dashboard_views_preserve_selection_and_scroll() {
+        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+        app.refresh();
+        app.next();
+        app.scroll_dashboard_down();
+        app.scroll_dashboard_down();
+
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+        assert_eq!(app.dashboard.selected, 0);
+        assert_eq!(app.dashboard.scroll, 0);
+        app.next();
+        app.scroll_dashboard_down();
+
+        app.show_dashboard_section(DashboardSection::MyPrs);
+        assert_eq!(app.dashboard.selected, 1);
+        assert_eq!(app.dashboard.scroll, 2);
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+        assert_eq!(app.dashboard.selected, 1);
+        assert_eq!(app.dashboard.scroll, 1);
+    }
+
+    #[test]
+    fn stacked_dashboard_ignores_section_switches() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        app.refresh();
+
+        assert!(!app.show_dashboard_section(DashboardSection::AwaitingReview));
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Section("My PRs")))
+        );
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Section("Awaiting Review")))
+        );
+    }
+
+    #[test]
     fn refresh_classifies_missing_gh_errors() {
         let mut source = TestSource::ok();
         source.current_user = Err("failed to run gh api user".to_owned());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
 
@@ -637,7 +768,7 @@ mod tests {
     fn refresh_classifies_auth_errors() {
         let mut source = TestSource::ok();
         source.current_user = Err("authentication required; run gh auth login".to_owned());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
 
@@ -648,7 +779,7 @@ mod tests {
     fn refresh_classifies_github_outage_errors() {
         let mut source = TestSource::ok();
         source.current_user = Err("HTTP 503 Service Unavailable".to_owned());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
 
@@ -670,7 +801,7 @@ mod tests {
     fn refresh_classifies_timeout_errors() {
         let mut source = TestSource::ok();
         source.current_user = Err("gh command timed out after 30s: gh api graphql".to_owned());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
 
@@ -683,7 +814,7 @@ mod tests {
 
     #[test]
     fn dashboard_loading_screen_is_for_empty_dashboard_loads() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
 
         app.dashboard.loading = true;
         assert!(app.show_dashboard_loading_screen());
@@ -698,12 +829,12 @@ mod tests {
         app.dashboard.loading = false;
         app.refresh();
         app.dashboard.loading = true;
-        assert!(!app.show_dashboard_loading_screen());
+        assert!(app.show_dashboard_loading_screen());
     }
 
     #[test]
     fn loading_frame_advances_only_while_loading() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
 
         app.advance_loading_frame();
         assert_eq!(app.loading_frame, 0);
@@ -714,11 +845,25 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_refresh_is_throttled_after_recent_refresh() {
+        let source = TestSource::ok();
+        let calls = source.current_user_calls.clone();
+        let mut app = App::with_default_config(Box::new(source));
+
+        app.refresh_async();
+        poll_until_dashboard_ready(&mut app);
+        app.refresh_async();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!app.dashboard.loading);
+    }
+
+    #[test]
     fn same_repo_groups_collapse_independently_across_sections() {
         let mut source = TestSource::ok();
         source.my_prs = Ok(vec![pr("owner/shared", 1)]);
         source.review_prs = Ok(vec![pr("owner/shared", 2)]);
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
         app.refresh();
 
         app.next();
@@ -745,7 +890,7 @@ mod tests {
 
     #[test]
     fn navigation_and_group_toggle_update_visible_rows() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
 
         let expanded_count = app.rows().len();
@@ -767,7 +912,7 @@ mod tests {
         let mut source = TestSource::ok();
         source.my_prs = Ok((1..=7).map(|number| pr("owner/repo", number)).collect());
         source.review_prs = Ok(Vec::new());
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
         app.refresh();
 
         let numbers: Vec<_> = app
@@ -805,7 +950,7 @@ mod tests {
 
     #[test]
     fn search_open_close_and_query_edit_preserve_dashboard_selection() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.next();
 
@@ -821,7 +966,7 @@ mod tests {
 
     #[test]
     fn search_returns_loaded_prs_even_when_group_is_collapsed() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.next();
         app.toggle_selected_group();
@@ -840,7 +985,7 @@ mod tests {
 
     #[test]
     fn search_selection_clamps_and_opening_match_clears_search() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.open_search();
         app.next_search_match();
@@ -855,8 +1000,24 @@ mod tests {
     }
 
     #[test]
+    fn opening_search_match_activates_its_separate_dashboard_section() {
+        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+        app.refresh();
+        app.open_search();
+        app.push_search_char('2');
+
+        app.open_selected_search_match();
+
+        assert_eq!(app.view, AppView::Detail);
+        assert_eq!(
+            app.dashboard.active_section(),
+            DashboardSection::AwaitingReview
+        );
+    }
+
+    #[test]
     fn opening_detail_uses_placeholder_then_background_results() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.next();
         app.next();
@@ -877,13 +1038,35 @@ mod tests {
     }
 
     #[test]
+    fn detail_refresh_reuses_existing_detail_and_is_throttled() {
+        let source = TestSource::ok();
+        let detail_calls = source.detail_calls.clone();
+        let discussion_calls = source.discussion_calls.clone();
+        let mut app = App::with_default_config(Box::new(source));
+
+        app.refresh();
+        app.next();
+        app.next();
+        app.open_selected_detail();
+        poll_until_ready(&mut app);
+
+        app.refresh_detail_async();
+
+        assert_eq!(app.detail.current.as_ref().unwrap().body, "Loaded body");
+        assert_eq!(detail_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(discussion_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(app.detail.detail_status, DetailStatus::Ready);
+        assert_eq!(app.detail.discussion_status, DiscussionStatus::Ready);
+    }
+
+    #[test]
     fn detail_load_preserves_dashboard_review_and_check_metadata_when_empty() {
         let mut source = TestSource::ok();
         let mut loaded = detail(pr("owner/repo", 1));
         loaded.pr.review_decision = Some(String::new());
         loaded.pr.check_status = Some(String::new());
         source.detail = Ok(loaded);
-        let mut app = App::new(Box::new(source));
+        let mut app = App::with_default_config(Box::new(source));
 
         app.refresh();
         app.next();
@@ -898,7 +1081,7 @@ mod tests {
 
     #[test]
     fn detail_pane_focus_controls_active_scroll_target() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.scroll_active_down();
         assert_eq!(app.detail.description_scroll, 1);
         assert_eq!(app.detail.discussion_scroll, 0);
@@ -916,7 +1099,7 @@ mod tests {
 
     #[test]
     fn discussion_selection_wraps_and_resets_scroll() {
-        let mut app = App::new(Box::new(TestSource::ok()));
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         let mut detail = detail(pr("owner/repo", 1));
         detail.discussion = vec![
             discussion("alice", "2026-07-01T10:00:00Z"),
@@ -944,6 +1127,18 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("background loads did not finish");
+    }
+
+    fn poll_until_dashboard_ready(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            app.poll_background();
+            if !app.dashboard.loading {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("dashboard load did not finish");
     }
 
     fn pr(repo: &str, number: u64) -> PullRequest {

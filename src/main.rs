@@ -33,12 +33,10 @@ fn main() -> Result<()> {
     let config = config::Config::load()?;
 
     match cli.command.unwrap_or(Commands::Dashboard) {
-        Commands::Dashboard => ui::run(
-            client(cli.mock, &config),
-            config.nerd_fonts,
-            config.dashboard.prs_per_repo_page,
-            &config.ui.theme,
-        ),
+        Commands::Dashboard => {
+            let client = client(cli.mock, &config);
+            ui::run(client, config)
+        }
         Commands::Doctor => run_doctor(cli.mock, &config),
     }
 }
@@ -63,6 +61,10 @@ fn run_doctor(mock: bool, config: &config::Config) -> Result<()> {
     println!(
         "dashboard PRs per repo page: {}",
         config.dashboard.prs_per_repo_page
+    );
+    println!(
+        "separate dashboard views: {}",
+        config.dashboard.separate_views
     );
 
     if mock {

@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn active_pane_label_tracks_focused_detail_pane() {
-        let mut app = App::new(Box::new(EmptySource));
+        let mut app = App::with_default_config(Box::new(EmptySource));
 
         assert_eq!(active_pane_label(&app), "description");
         app.toggle_detail_pane();
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn status_line_reports_errors_without_loading_messages() {
-        let mut app = App::new(Box::new(EmptySource));
+        let mut app = App::with_default_config(Box::new(EmptySource));
         assert!(status_line(&app).is_none());
 
         app.detail.detail_status = DetailStatus::Loading;
