@@ -1,5 +1,6 @@
 use super::dashboard::{dashboard_section_at_screen_position, row_index_at_screen_line};
 use super::theme;
+use super::theme_picker;
 use crate::app::{App, AppView, DashboardSection, DetailPane};
 use crate::github::MockErrorMode;
 use anyhow::Result;
@@ -7,6 +8,7 @@ use crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::terminal;
+use ratatui::layout::Rect;
 
 pub(super) enum InputOutcome {
     Continue(bool),
@@ -27,8 +29,14 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
 
     if app.theme_picker_is_open() {
         let changed = match key.code {
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
-                app.close_theme_picker();
+            KeyCode::Enter => {
+                let theme = theme::theme_key(app.selected_theme_index())
+                    .expect("selected theme index should be valid");
+                app.save_theme_picker(theme)?;
+                true
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.cancel_theme_picker();
                 true
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -189,17 +197,12 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
 
 fn handle_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
     if app.theme_picker_is_open() {
-        return Ok(match mouse.kind {
-            MouseEventKind::ScrollDown => {
-                app.next_theme(theme::theme_count());
-                true
-            }
-            MouseEventKind::ScrollUp => {
-                app.previous_theme(theme::theme_count());
-                true
-            }
-            _ => false,
-        });
+        let (width, height) = terminal::size()?;
+        return Ok(handle_theme_picker_mouse(
+            mouse,
+            app,
+            Rect::new(0, 0, width, height),
+        ));
     }
 
     if app.search_is_open() {
@@ -222,6 +225,24 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
     };
 
     Ok(changed)
+}
+
+fn handle_theme_picker_mouse(mouse: MouseEvent, app: &mut App, area: Rect) -> bool {
+    match mouse.kind {
+        MouseEventKind::ScrollDown => {
+            app.next_theme(theme::theme_count());
+            true
+        }
+        MouseEventKind::ScrollUp => {
+            app.previous_theme(theme::theme_count());
+            true
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            theme_picker::theme_index_at_position(area, mouse.column, mouse.row)
+                .is_some_and(|index| app.select_theme(index, theme::theme_count()))
+        }
+        _ => false,
+    }
 }
 
 fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App) -> bool {
@@ -599,7 +620,28 @@ mod tests {
 
         assert_continue_changed(key(KeyCode::Esc, &mut app), true);
         assert!(!app.theme_picker_is_open());
-        assert_eq!(app.active_theme_index(), 1);
+        assert_eq!(app.active_theme_index(), 0);
+    }
+
+    #[test]
+    fn dashboard_theme_picker_previews_clicked_theme() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        let area = Rect::new(0, 0, 100, 30);
+        app.open_theme_picker();
+        let popup = theme_picker::picker_area(area).unwrap();
+
+        assert!(handle_theme_picker_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: popup.x + 2,
+                row: popup.y + 5,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            area,
+        ));
+        assert_eq!(app.selected_theme_index(), 2);
+        assert_eq!(app.active_theme_index(), 2);
     }
 
     #[test]

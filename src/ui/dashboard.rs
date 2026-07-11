@@ -300,11 +300,13 @@ fn render_search_overlay(frame: &mut ratatui::Frame<'_>, app: &App) {
 
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme::rule()),
-        ),
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme::rule()),
+            )
+            .style(theme::background()),
         popup,
     );
 }

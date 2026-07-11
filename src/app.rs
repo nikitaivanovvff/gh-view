@@ -39,6 +39,7 @@ pub struct App {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ThemePickerState {
     pub selected: usize,
+    original: usize,
 }
 
 struct CopyNotice {
@@ -186,11 +187,21 @@ impl App {
         self.dashboard.close_search();
         self.theme_picker = Some(ThemePickerState {
             selected: self.active_theme,
+            original: self.active_theme,
         });
     }
 
-    pub fn close_theme_picker(&mut self) {
+    pub fn cancel_theme_picker(&mut self) {
+        if let Some(picker) = &self.theme_picker {
+            self.active_theme = picker.original;
+        }
         self.theme_picker = None;
+    }
+
+    pub fn save_theme_picker(&mut self, theme: &str) -> anyhow::Result<()> {
+        self.config.save_theme(theme)?;
+        self.theme_picker = None;
+        Ok(())
     }
 
     pub fn theme_picker_is_open(&self) -> bool {
@@ -228,6 +239,19 @@ impl App {
         };
         picker.selected = picker.selected.checked_sub(1).unwrap_or(theme_count - 1);
         self.active_theme = picker.selected;
+    }
+
+    pub fn select_theme(&mut self, index: usize, theme_count: usize) -> bool {
+        if index >= theme_count {
+            return false;
+        }
+        let Some(picker) = &mut self.theme_picker else {
+            return false;
+        };
+        let changed = picker.selected != index;
+        picker.selected = index;
+        self.active_theme = index;
+        changed
     }
 
     pub fn close_search(&mut self) {

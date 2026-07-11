@@ -1,6 +1,7 @@
 use ratatui::style::Color;
 
 pub(super) struct Palette {
+    pub background: Color,
     pub normal: Color,
     pub muted: Color,
     pub accent: Color,
@@ -17,6 +18,7 @@ pub(super) struct Palette {
 }
 
 pub(super) const GH_VIEW: Palette = Palette {
+    background: Color::Rgb(18, 17, 23),
     normal: Color::Rgb(214, 211, 221),
     muted: Color::Rgb(91, 88, 103),
     accent: Color::Rgb(137, 81, 255),
@@ -33,6 +35,7 @@ pub(super) const GH_VIEW: Palette = Palette {
 };
 
 pub(super) const CATPPUCCIN_MOCHA: Palette = Palette {
+    background: Color::Rgb(30, 30, 46),
     normal: Color::Rgb(205, 214, 244),
     muted: Color::Rgb(127, 132, 156),
     accent: Color::Rgb(203, 166, 247),
@@ -49,6 +52,7 @@ pub(super) const CATPPUCCIN_MOCHA: Palette = Palette {
 };
 
 pub(super) const TOKYO_NIGHT: Palette = Palette {
+    background: Color::Rgb(26, 27, 38),
     normal: Color::Rgb(192, 202, 245),
     muted: Color::Rgb(86, 95, 137),
     accent: Color::Rgb(187, 154, 247),
@@ -65,6 +69,7 @@ pub(super) const TOKYO_NIGHT: Palette = Palette {
 };
 
 pub(super) const ROSE_PINE: Palette = Palette {
+    background: Color::Rgb(25, 23, 36),
     normal: Color::Rgb(224, 222, 244),
     muted: Color::Rgb(110, 106, 134),
     accent: Color::Rgb(196, 167, 231),
@@ -81,6 +86,7 @@ pub(super) const ROSE_PINE: Palette = Palette {
 };
 
 pub(super) const GRUVBOX_DARK: Palette = Palette {
+    background: Color::Rgb(40, 40, 40),
     normal: Color::Rgb(235, 219, 178),
     muted: Color::Rgb(146, 131, 116),
     accent: Color::Rgb(211, 134, 155),
@@ -94,4 +100,55 @@ pub(super) const GRUVBOX_DARK: Palette = Palette {
     reviewer: Color::Rgb(142, 192, 124),
     branch: Color::Rgb(104, 157, 106),
     muted_key: Color::Rgb(168, 153, 132),
+};
+
+pub(super) const CATPPUCCIN_LATTE: Palette = Palette {
+    background: Color::Rgb(239, 241, 245),
+    normal: Color::Rgb(76, 79, 105),
+    muted: Color::Rgb(124, 127, 147),
+    accent: Color::Rgb(136, 57, 239),
+    rule: Color::Rgb(204, 208, 218),
+    focus_rule: Color::Rgb(114, 135, 253),
+    selection_bg: Color::Rgb(220, 224, 232),
+    success: Color::Rgb(64, 160, 43),
+    info: Color::Rgb(30, 102, 245),
+    warning: Color::Rgb(223, 142, 29),
+    danger: Color::Rgb(210, 15, 57),
+    reviewer: Color::Rgb(23, 146, 153),
+    branch: Color::Rgb(4, 165, 229),
+    muted_key: Color::Rgb(108, 111, 133),
+};
+
+pub(super) const SOLARIZED_LIGHT: Palette = Palette {
+    background: Color::Rgb(253, 246, 227),
+    normal: Color::Rgb(88, 110, 117),
+    muted: Color::Rgb(131, 148, 150),
+    accent: Color::Rgb(108, 113, 196),
+    rule: Color::Rgb(238, 232, 213),
+    focus_rule: Color::Rgb(38, 139, 210),
+    selection_bg: Color::Rgb(238, 232, 213),
+    success: Color::Rgb(133, 153, 0),
+    info: Color::Rgb(38, 139, 210),
+    warning: Color::Rgb(181, 137, 0),
+    danger: Color::Rgb(220, 50, 47),
+    reviewer: Color::Rgb(42, 161, 152),
+    branch: Color::Rgb(38, 139, 210),
+    muted_key: Color::Rgb(101, 123, 131),
+};
+
+pub(super) const GITHUB_LIGHT: Palette = Palette {
+    background: Color::Rgb(255, 255, 255),
+    normal: Color::Rgb(31, 35, 40),
+    muted: Color::Rgb(89, 99, 110),
+    accent: Color::Rgb(130, 80, 223),
+    rule: Color::Rgb(209, 217, 224),
+    focus_rule: Color::Rgb(9, 105, 218),
+    selection_bg: Color::Rgb(221, 244, 255),
+    success: Color::Rgb(26, 127, 55),
+    info: Color::Rgb(9, 105, 218),
+    warning: Color::Rgb(154, 103, 0),
+    danger: Color::Rgb(209, 36, 47),
+    reviewer: Color::Rgb(23, 155, 155),
+    branch: Color::Rgb(9, 105, 218),
+    muted_key: Color::Rgb(89, 99, 110),
 };

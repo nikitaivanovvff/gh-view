@@ -1,4 +1,7 @@
-use super::palette::{CATPPUCCIN_MOCHA, GH_VIEW, GRUVBOX_DARK, Palette, ROSE_PINE, TOKYO_NIGHT};
+use super::palette::{
+    CATPPUCCIN_LATTE, CATPPUCCIN_MOCHA, GH_VIEW, GITHUB_LIGHT, GRUVBOX_DARK, Palette, ROSE_PINE,
+    SOLARIZED_LIGHT, TOKYO_NIGHT,
+};
 use ratatui::style::Style;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -42,6 +45,24 @@ const THEMES: &[ThemeOption] = &[
         description: "warm retro developer colors",
         palette: &GRUVBOX_DARK,
     },
+    ThemeOption {
+        key: "catppuccin-latte",
+        name: "Catppuccin Latte",
+        description: "warm pastel light theme",
+        palette: &CATPPUCCIN_LATTE,
+    },
+    ThemeOption {
+        key: "solarized-light",
+        name: "Solarized Light",
+        description: "low-contrast precision light theme",
+        palette: &SOLARIZED_LIGHT,
+    },
+    ThemeOption {
+        key: "github-light",
+        name: "GitHub Light",
+        description: "crisp neutral light theme",
+        palette: &GITHUB_LIGHT,
+    },
 ];
 
 pub(super) fn themes() -> &'static [ThemeOption] {
@@ -50,6 +71,10 @@ pub(super) fn themes() -> &'static [ThemeOption] {
 
 pub(super) fn theme_count() -> usize {
     THEMES.len()
+}
+
+pub(super) fn theme_key(index: usize) -> Option<&'static str> {
+    THEMES.get(index).map(|theme| theme.key)
 }
 
 pub(super) fn theme_index(value: &str) -> usize {
@@ -70,6 +95,10 @@ fn active() -> &'static Palette {
         .get(ACTIVE_THEME.load(Ordering::Relaxed))
         .map(|theme| theme.palette)
         .unwrap_or(&GH_VIEW)
+}
+
+pub(super) fn background() -> Style {
+    Style::default().bg(active().background)
 }
 
 pub(super) fn normal() -> Style {
