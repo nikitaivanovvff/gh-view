@@ -90,6 +90,12 @@ gh_timeout_seconds = 30
 # Default: false.
 nerd_fonts = false
 
+[ui]
+# Initial color theme. Available themes: default, catppuccin-mocha,
+# tokyo-night, rose-pine, gruvbox-dark, catppuccin-latte,
+# solarized-light, and github-light.
+theme = "default"
+
 [dashboard]
 # Number of PRs shown per expanded repository page.
 # Default: 3.
@@ -111,6 +117,7 @@ separate_views = false
 | `1` / `2` / `tab` | Switch dashboard view when `separate_views` is enabled |
 | `enter` | Open selected PR |
 | `/` | Search loaded PRs |
+| `t` | Open theme picker |
 | `c` | Copy selected PR branch name |
 | `space` / `o` | Collapse/expand repository |
 | `n` / `→` | Next page for selected repository |
@@ -118,6 +125,10 @@ separate_views = false
 | `b` | Open selected PR in browser |
 | `r` | Refresh dashboard |
 | `q` / `esc` | Quit |
+
+The theme picker supports `j`/`k`, arrow keys, the mouse wheel, and clicking a theme for a live preview. Press `enter` to save the selected theme to `[ui].theme`; `esc` cancels the preview and restores the previous theme.
+
+Preset colors are adapted from the official [Catppuccin](https://catppuccin.com/palette/), [Tokyo Night](https://github.com/folke/tokyonight.nvim), [Rosé Pine](https://rosepinetheme.com/palette/ingredients/), [Gruvbox](https://github.com/morhetz/gruvbox), [Solarized](https://ethanschoonover.com/solarized/), and [GitHub Primer](https://primer.style/primitives/colors) palettes.
 
 ### Dashboard search
 

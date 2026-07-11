@@ -15,7 +15,8 @@ use std::io;
 use std::time::{Duration, Instant};
 
 pub fn run(client: Box<dyn PullRequestSource>, config: Config) -> Result<()> {
-    let mut app = App::new(client, config);
+    let active_theme = super::theme::theme_index(&config.ui.theme);
+    let mut app = App::with_active_theme(client, config, active_theme);
     app.refresh_async();
 
     let mut terminal = setup_terminal()?;

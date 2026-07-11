@@ -57,6 +57,7 @@ fn run_doctor(mock: bool, config: &config::Config) -> Result<()> {
     println!("gh-view doctor");
     println!("Rust CLI is installed and runnable.");
     println!("gh command timeout: {}s", config.gh_timeout_seconds);
+    println!("ui theme: {}", config.ui.theme);
     println!(
         "dashboard PRs per repo page: {}",
         config.dashboard.prs_per_repo_page
