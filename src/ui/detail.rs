@@ -1,4 +1,4 @@
-use super::layout::DetailLayout;
+use super::layout::{DetailLayout, MouseLayout, MouseTarget};
 use super::text::{
     age_label, ci_style, ci_text, loading_dots, merge_style, pr_status, rule_line, state_style,
     status_style, truncate,
@@ -12,9 +12,21 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &App) {
+pub(super) fn render_detail(
+    frame: &mut ratatui::Frame<'_>,
+    app: &App,
+    mouse_layout: &mut MouseLayout,
+) {
     let area = frame.area();
     let layout = DetailLayout::new(area);
+    mouse_layout.push(
+        layout.description,
+        MouseTarget::DetailPane(DetailPane::Description),
+    );
+    mouse_layout.push(
+        layout.discussion,
+        MouseTarget::DetailPane(DetailPane::Discussion),
+    );
 
     let width = area.width as usize;
     let Some(detail) = &app.detail.current else {

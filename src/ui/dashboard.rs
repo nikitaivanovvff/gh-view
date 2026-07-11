@@ -1,3 +1,4 @@
+use super::layout::{MouseLayout, MouseTarget};
 use super::text::{
     age_label, ci_style, ci_text, is_stale, loading_dots, pr_status, reviewer_style, rule_line,
     selected_style, status_style, truncate,
@@ -16,7 +17,11 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 const DASHBOARD_VIEW_GAP: usize = 4;
 
-pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &App) {
+pub(super) fn render_dashboard(
+    frame: &mut ratatui::Frame<'_>,
+    app: &App,
+    mouse_layout: &mut MouseLayout,
+) {
     if app.show_dashboard_loading_screen() {
         render_dashboard_loading(frame, app.loading_frame);
         return;
@@ -37,6 +42,7 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &App) {
     let selected = app.dashboard.selected.min(rows.len().saturating_sub(1));
     let width = chunks[0].width as usize;
     let mut lines = Vec::new();
+    let mut targets = Vec::new();
 
     let user = app
         .dashboard
@@ -61,6 +67,23 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &App) {
         match row {
             Row::Section(title) => {
                 if app.config().dashboard.separate_views {
+                    let line = lines.len();
+                    let mut x = 0usize;
+                    for (label_index, section) in
+                        [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
+                            .into_iter()
+                            .enumerate()
+                    {
+                        let label = dashboard_view_label(app, section, label_index);
+                        targets.push((
+                            line,
+                            1,
+                            x,
+                            label.chars().count(),
+                            MouseTarget::DashboardSection(section),
+                        ));
+                        x += label.chars().count() + DASHBOARD_VIEW_GAP;
+                    }
                     lines.extend(dashboard_view_lines(app, width));
                 } else {
                     if *title == "Awaiting Review" {
@@ -77,6 +100,7 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &App) {
                 page_count,
                 ..
             } => {
+                targets.push((lines.len(), 1, 0, width, MouseTarget::DashboardRow(index)));
                 lines.push(group_line(
                     index == selected,
                     repo,
@@ -88,11 +112,13 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &App) {
             }
             Row::Pr(pr) => {
                 let is_selected = index == selected;
+                targets.push((lines.len(), 3, 0, width, MouseTarget::DashboardRow(index)));
                 lines.push(pr_line(is_selected, pr, width));
                 lines.push(branch_line(is_selected, pr, app.config().nerd_fonts));
                 lines.push(reviewers_line(is_selected, pr));
             }
             Row::Message(message) => {
+                targets.push((lines.len(), 1, 0, width, MouseTarget::DashboardRow(index)));
                 lines.push(message_line(index == selected, message));
             }
         }
@@ -102,6 +128,9 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &App) {
         .dashboard
         .scroll
         .min(max_scroll(lines.len(), chunks[0].height));
+    for target in targets {
+        register_visible_target(mouse_layout, chunks[0], target, scroll);
+    }
     frame.render_widget(
         Paragraph::new(lines)
             .style(theme::normal())
@@ -118,71 +147,36 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &App) {
     }
 }
 
-pub(super) fn row_index_at_screen_line(
-    rows: &[Row<'_>],
-    y: u16,
-    scroll: u16,
-    separate_views: bool,
-) -> Option<usize> {
-    let mut line = 2usize;
-    let y = y.saturating_add(scroll) as usize;
-
-    for (index, row) in rows.iter().enumerate() {
-        if !separate_views && matches!(row, Row::Section("Awaiting Review")) {
-            if y == line {
-                return None;
-            }
-            line += 1;
-        }
-
-        let height = row_screen_height(row);
-        if y >= line && y < line + height {
-            return match row {
-                Row::Section(_) => None,
-                _ => Some(index),
-            };
-        }
-        line += height;
-    }
-
-    None
-}
-
-pub(super) fn dashboard_section_at_screen_position(
-    app: &App,
-    x: u16,
-    y: u16,
-) -> Option<DashboardSection> {
-    if !app.config().dashboard.separate_views || y.saturating_add(app.dashboard.scroll) != 2 {
-        return None;
-    }
-
-    let x = x as usize;
-    let mut start = 0;
-    for (index, section) in [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
-        .into_iter()
-        .enumerate()
-    {
-        let label = dashboard_view_label(app, section, index);
-        let end = start + label.chars().count();
-        if x >= start && x < end {
-            return Some(section);
-        }
-        start = end + DASHBOARD_VIEW_GAP;
-    }
-
-    None
-}
-
 fn max_scroll(line_count: usize, visible_height: u16) -> u16 {
     line_count.saturating_sub(visible_height as usize) as u16
 }
 
-fn row_screen_height(row: &Row<'_>) -> usize {
-    match row {
-        Row::Section(_) => 2,
-        Row::Group { .. } | Row::Message(_) => 1,
-        Row::Pr(_) => 3,
+fn register_visible_target(
+    mouse_layout: &mut MouseLayout,
+    content: Rect,
+    placement: (usize, usize, usize, usize, MouseTarget),
+    scroll: u16,
+) {
+    let (line, height, x, width, target) = placement;
+    let top = content.y as i32 + line as i32 - scroll as i32;
+    let bottom = top + height as i32;
+    let visible_top = top.max(content.y as i32);
+    let visible_bottom = bottom.min(content.bottom() as i32);
+    let left = content.x.saturating_add(x.min(u16::MAX as usize) as u16);
+    let right = left
+        .saturating_add(width.min(u16::MAX as usize) as u16)
+        .min(content.right());
+
+    if visible_top < visible_bottom && left < right {
+        mouse_layout.push(
+            Rect::new(
+                left,
+                visible_top as u16,
+                right - left,
+                (visible_bottom - visible_top) as u16,
+            ),
+            target,
+        );
     }
 }
 
@@ -752,44 +746,6 @@ mod tests {
 
         assert_eq!(section_count(&rows, 0), 2);
         assert_eq!(section_count(&rows, 3), 3);
-    }
-
-    #[test]
-    fn row_index_at_screen_line_maps_rendered_dashboard_lines() {
-        let pr = pr();
-        let rows = vec![
-            Row::Section("My PRs"),
-            Row::Group {
-                section: crate::app::DashboardSection::MyPrs,
-                repo: "owner/a",
-                count: 1,
-                open: true,
-                page: 1,
-                page_count: 1,
-            },
-            Row::Pr(&pr),
-            Row::Section("Awaiting Review"),
-            Row::Message("  none".to_owned()),
-        ];
-
-        assert_eq!(row_index_at_screen_line(&rows, 0, 0, false), None);
-        assert_eq!(row_index_at_screen_line(&rows, 2, 0, false), None);
-        assert_eq!(row_index_at_screen_line(&rows, 4, 0, false), Some(1));
-        assert_eq!(row_index_at_screen_line(&rows, 5, 0, false), Some(2));
-        assert_eq!(row_index_at_screen_line(&rows, 7, 0, false), Some(2));
-        assert_eq!(row_index_at_screen_line(&rows, 8, 0, false), None);
-        assert_eq!(row_index_at_screen_line(&rows, 11, 0, false), Some(4));
-        assert_eq!(row_index_at_screen_line(&rows, 4, 1, false), Some(2));
-    }
-
-    #[test]
-    fn separate_awaiting_review_view_has_no_stacked_section_gap() {
-        let rows = vec![
-            Row::Section("Awaiting Review"),
-            Row::Message("  none".to_owned()),
-        ];
-
-        assert_eq!(row_index_at_screen_line(&rows, 4, 0, true), Some(1));
     }
 
     fn pr() -> PullRequest {
