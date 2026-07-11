@@ -1,3 +1,4 @@
+use super::layout::DetailLayout;
 use super::text::{
     age_label, ci_style, ci_text, loading_dots, merge_style, pr_status, rule_line, state_style,
     status_style, truncate,
@@ -13,14 +14,7 @@ use ratatui::widgets::Paragraph;
 
 pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let area = frame.area();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Min(1),
-            Constraint::Length(2),
-        ])
-        .split(area);
+    let layout = DetailLayout::new(area);
 
     let width = area.width as usize;
     let Some(detail) = &app.detail.current else {
@@ -30,7 +24,7 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 "No PR detail loaded. Press esc to go back.",
             )])
             .style(theme::normal()),
-            chunks[0],
+            layout.description,
         );
         return;
     };
@@ -77,15 +71,15 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     app.detail.description_scroll = app
         .detail
         .description_scroll
-        .min(max_scroll(summary.len(), chunks[0].height));
+        .min(max_scroll(summary.len(), layout.description.height));
     frame.render_widget(
         Paragraph::new(summary)
             .style(theme::normal())
             .scroll((app.detail.description_scroll, 0)),
-        chunks[0],
+        layout.description,
     );
 
-    render_discussion(frame, chunks[1], app);
+    render_discussion(frame, layout.discussion, app);
 
     let footer = footer_lines(
         width,
@@ -98,7 +92,7 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             FooterItem::new("r", "refresh detail"),
         ],
     );
-    frame.render_widget(Paragraph::new(footer), chunks[2]);
+    frame.render_widget(Paragraph::new(footer), layout.footer);
 }
 
 fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
