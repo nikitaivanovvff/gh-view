@@ -16,6 +16,7 @@ pub use search::DashboardSearchMatch;
 use status::classify_refresh_error;
 pub use status::{AppStatus, DashboardErrorLine, DashboardErrorPage, pull_request_status};
 use std::sync::mpsc;
+use std::sync::mpsc::TryRecvError;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -409,8 +410,12 @@ impl App {
             return false;
         };
 
-        let Ok(result) = rx.try_recv() else {
-            return false;
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return false,
+            Err(TryRecvError::Disconnected) => Err(AppStatus::Error(
+                "Internal error: dashboard worker disconnected.".to_owned(),
+            )),
         };
 
         self.apply_refresh_result(result);
@@ -422,8 +427,12 @@ impl App {
             return false;
         };
 
-        let Ok(result) = rx.try_recv() else {
-            return false;
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return false,
+            Err(TryRecvError::Disconnected) => {
+                Err("Internal error: detail worker disconnected.".to_owned())
+            }
         };
 
         self.detail.apply_detail_result(result);
@@ -435,8 +444,12 @@ impl App {
             return false;
         };
 
-        let Ok(result) = rx.try_recv() else {
-            return false;
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return false,
+            Err(TryRecvError::Disconnected) => {
+                Err("Internal error: discussion worker disconnected.".to_owned())
+            }
         };
 
         self.detail.apply_discussion_result(result);
@@ -866,6 +879,55 @@ mod tests {
         app.dashboard.loading = true;
         app.advance_loading_frame();
         assert_eq!(app.loading_frame, 1);
+    }
+
+    #[test]
+    fn disconnected_dashboard_worker_surfaces_internal_error() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        let (tx, rx) = mpsc::channel();
+        app.dashboard.rx = Some(rx);
+        app.dashboard.loading = true;
+        drop(tx);
+
+        assert!(app.poll_background());
+        assert!(!app.dashboard.loading);
+        assert!(app.dashboard.rx.is_none());
+        assert_eq!(
+            app.status,
+            AppStatus::Error("Internal error: dashboard worker disconnected.".to_owned())
+        );
+    }
+
+    #[test]
+    fn disconnected_detail_worker_surfaces_internal_error() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        let (tx, rx) = mpsc::channel();
+        app.detail.detail_rx = Some(rx);
+        app.detail.detail_status = DetailStatus::Loading;
+        drop(tx);
+
+        assert!(app.poll_background());
+        assert!(app.detail.detail_rx.is_none());
+        assert_eq!(
+            app.detail.detail_status,
+            DetailStatus::Error("Internal error: detail worker disconnected.".to_owned())
+        );
+    }
+
+    #[test]
+    fn disconnected_discussion_worker_surfaces_internal_error() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        let (tx, rx) = mpsc::channel();
+        app.detail.discussion_rx = Some(rx);
+        app.detail.discussion_status = DiscussionStatus::Loading;
+        drop(tx);
+
+        assert!(app.poll_background());
+        assert!(app.detail.discussion_rx.is_none());
+        assert_eq!(
+            app.detail.discussion_status,
+            DiscussionStatus::Error("Internal error: discussion worker disconnected.".to_owned())
+        );
     }
 
     #[test]
