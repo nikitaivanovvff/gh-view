@@ -1,6 +1,6 @@
 use super::theme;
 use crate::app::pull_request_status;
-use crate::model::{PullRequest, ReviewerState};
+use crate::model::{CheckStatus, PullRequest, ReviewerState};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -73,21 +73,21 @@ pub(super) fn truncate(value: &str, max_width: usize) -> String {
     truncated
 }
 
-pub(super) fn ci_text(status: Option<&str>) -> String {
+pub(super) fn ci_text(status: Option<&CheckStatus>) -> String {
     match status {
-        Some("passing") => "ci✓".to_owned(),
-        Some("failing") => "ci×".to_owned(),
-        Some("pending") => "ci…".to_owned(),
-        Some(other) => format!("ci {other}"),
+        Some(CheckStatus::Passing) => "ci✓".to_owned(),
+        Some(CheckStatus::Failing) => "ci×".to_owned(),
+        Some(CheckStatus::Pending) => "ci…".to_owned(),
+        Some(CheckStatus::Unknown(other)) => format!("ci {other}"),
         None => "ci-".to_owned(),
     }
 }
 
-pub(super) fn ci_style(status: Option<&str>) -> Style {
+pub(super) fn ci_style(status: Option<&CheckStatus>) -> Style {
     match status {
-        Some("passing") => theme::success(),
-        Some("failing") => theme::danger(),
-        Some("pending") => theme::warning(),
+        Some(CheckStatus::Passing) => theme::success(),
+        Some(CheckStatus::Failing) => theme::danger(),
+        Some(CheckStatus::Pending) => theme::warning(),
         _ => theme::muted(),
     }
 }
@@ -186,9 +186,9 @@ mod tests {
 
     #[test]
     fn formats_ci_and_age_labels() {
-        assert_eq!(ci_text(Some("passing")), "ci✓");
-        assert_eq!(ci_text(Some("failing")), "ci×");
-        assert_eq!(ci_text(Some("pending")), "ci…");
+        assert_eq!(ci_text(Some(&CheckStatus::Passing)), "ci✓");
+        assert_eq!(ci_text(Some(&CheckStatus::Failing)), "ci×");
+        assert_eq!(ci_text(Some(&CheckStatus::Pending)), "ci…");
         assert_eq!(ci_text(None), "ci-");
         let today = date_days("2026-07-07T10:00:00Z").unwrap();
         assert_eq!(age_label_for_day("2026-07-07T10:00:00Z", today), "today");

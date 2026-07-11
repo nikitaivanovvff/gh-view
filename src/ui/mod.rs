@@ -2,6 +2,7 @@ mod dashboard;
 mod detail;
 mod footer;
 mod input;
+mod layout;
 mod palette;
 mod render;
 mod terminal;

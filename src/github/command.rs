@@ -1,13 +1,19 @@
 use super::GhError;
 use anyhow::{Context, Result, anyhow, bail};
-use std::io;
-use std::process::{Command, Output, Stdio};
+use std::io::{self, Read};
+use std::path::Path;
+use std::process::{Command, ExitStatus, Output, Stdio};
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 pub struct GhCommand {
     timeout: Duration,
+}
+
+pub(crate) trait CommandRunner: Send + Sync {
+    fn run(&self, args: Vec<String>) -> Result<Output>;
 }
 
 impl GhCommand {
@@ -24,29 +30,41 @@ impl GhCommand {
             .into_iter()
             .map(|arg| arg.as_ref().to_owned())
             .collect();
-        let mut child = Command::new("gh")
+        self.run_command(Path::new("gh"), args)
+    }
+
+    fn run_command(&self, executable: &Path, args: Vec<String>) -> Result<Output> {
+        let mut child = Command::new(executable)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| gh_spawn_error(error, &args))?;
+        let stdout = child.stdout.take().context("failed to capture gh stdout")?;
+        let stderr = child.stderr.take().context("failed to capture gh stderr")?;
+        let stdout_reader = thread::spawn(move || read_pipe(stdout));
+        let stderr_reader = thread::spawn(move || read_pipe(stderr));
         let started = Instant::now();
 
         loop {
-            if child
-                .try_wait()
-                .context("failed to poll gh command")?
-                .is_some()
-            {
-                return child
-                    .wait_with_output()
-                    .context("failed to collect gh command output");
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    return collect_output(status, stdout_reader, stderr_reader);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    join_readers(stdout_reader, stderr_reader)?;
+                    return Err(error).context("failed to poll gh command");
+                }
             }
 
             if started.elapsed() >= self.timeout {
                 let _ = child.kill();
                 let _ = child.wait();
+                join_readers(stdout_reader, stderr_reader)?;
                 bail!(GhError::Timeout(format!(
                     "gh command timed out after {}s: gh {}",
                     self.timeout.as_secs(),
@@ -57,16 +75,46 @@ impl GhCommand {
             thread::sleep(Duration::from_millis(25));
         }
     }
+}
 
-    pub fn version(&self) -> Option<String> {
-        let output = self.run(["--version"]).ok()?;
-        if !output.status.success() {
-            return None;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        stdout.lines().next().map(str::trim).map(str::to_owned)
+impl CommandRunner for GhCommand {
+    fn run(&self, args: Vec<String>) -> Result<Output> {
+        GhCommand::run(self, args)
     }
+}
+
+fn read_pipe(mut pipe: impl Read) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    pipe.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn collect_output(
+    status: ExitStatus,
+    stdout_reader: JoinHandle<io::Result<Vec<u8>>>,
+    stderr_reader: JoinHandle<io::Result<Vec<u8>>>,
+) -> Result<Output> {
+    let (stdout, stderr) = join_readers(stdout_reader, stderr_reader)?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn join_readers(
+    stdout_reader: JoinHandle<io::Result<Vec<u8>>>,
+    stderr_reader: JoinHandle<io::Result<Vec<u8>>>,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let stdout = stdout_reader.join();
+    let stderr = stderr_reader.join();
+    let stdout = stdout
+        .map_err(|_| anyhow!("gh stdout reader thread panicked"))?
+        .context("failed to read gh stdout")?;
+    let stderr = stderr
+        .map_err(|_| anyhow!("gh stderr reader thread panicked"))?
+        .context("failed to read gh stderr")?;
+    Ok((stdout, stderr))
 }
 
 pub fn command_error(output: &Output) -> String {
@@ -99,6 +147,7 @@ fn gh_spawn_error(error: io::Error, args: &[String]) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{self, Write};
     use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};
 
@@ -110,6 +159,36 @@ mod tests {
             "stdout details"
         );
         assert!(command_error(&output(b"", b"")).contains("command exited with"));
+    }
+
+    #[test]
+    fn drains_large_stdout_and_stderr_without_deadlocking() {
+        let executable = std::env::current_exe().unwrap();
+        let output = GhCommand::new(Duration::from_secs(5))
+            .run_command(
+                &executable,
+                vec![
+                    "--ignored".into(),
+                    "--exact".into(),
+                    "github::command::tests::large_pipe_writer".into(),
+                    "--nocapture".into(),
+                ],
+            )
+            .unwrap();
+
+        assert!(output.status.success());
+        assert!(output.stdout.windows(8).any(|bytes| bytes == b"oooooooo"));
+        assert!(output.stderr.windows(8).any(|bytes| bytes == b"eeeeeeee"));
+        assert!(output.stdout.len() > 1024 * 1024);
+        assert!(output.stderr.len() > 1024 * 1024);
+    }
+
+    #[test]
+    #[ignore]
+    fn large_pipe_writer() {
+        let bytes = 2 * 1024 * 1024;
+        io::stdout().write_all(&vec![b'o'; bytes]).unwrap();
+        io::stderr().write_all(&vec![b'e'; bytes]).unwrap();
     }
 
     fn output(stderr: &[u8], stdout: &[u8]) -> Output {

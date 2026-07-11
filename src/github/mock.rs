@@ -2,8 +2,8 @@
 use super::DEFAULT_GH_COMMAND_TIMEOUT_SECONDS;
 use super::{GhError, GhStatus, MockErrorMode, PullRequestSource};
 use crate::model::{
-    CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind, DiscussionReply,
-    PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
+    CheckStatus, CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind,
+    DiscussionReply, PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
 };
 use anyhow::{Result, bail};
 use std::sync::{Arc, Mutex};
@@ -375,7 +375,7 @@ fn mock_pr(input: MockPr<'_>) -> PullRequest {
         state: "OPEN".to_owned(),
         is_draft: input.is_draft,
         review_decision: input.review_decision.map(str::to_owned),
-        check_status: input.check_status.map(str::to_owned),
+        check_status: input.check_status.map(CheckStatus::from_label),
         reviewers: input
             .reviewers
             .iter()

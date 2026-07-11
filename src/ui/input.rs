@@ -1,4 +1,5 @@
 use super::dashboard::{dashboard_section_at_screen_position, row_index_at_screen_line};
+use super::layout::DetailLayout;
 use super::theme;
 use super::theme_picker;
 use crate::app::{App, AppView, DashboardSection, DetailPane};
@@ -312,17 +313,8 @@ fn handle_detail_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
 }
 
 fn detail_pane_at_row(row: u16) -> Result<Option<DetailPane>> {
-    let (_, height) = terminal::size()?;
-    if height <= 2 || row >= height.saturating_sub(2) {
-        return Ok(None);
-    }
-
-    let description_height = height.saturating_sub(2) / 2;
-    if row < description_height {
-        Ok(Some(DetailPane::Description))
-    } else {
-        Ok(Some(DetailPane::Discussion))
-    }
+    let (width, height) = terminal::size()?;
+    Ok(DetailLayout::new(Rect::new(0, 0, width, height)).pane_at_row(row))
 }
 
 fn mock_error_mode_for_key(

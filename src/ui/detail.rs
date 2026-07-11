@@ -1,3 +1,4 @@
+use super::layout::DetailLayout;
 use super::text::{
     age_label, ci_style, ci_text, loading_dots, merge_style, pr_status, rule_line, state_style,
     status_style, truncate,
@@ -11,16 +12,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
+pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Min(1),
-            Constraint::Length(2),
-        ])
-        .split(area);
+    let layout = DetailLayout::new(area);
 
     let width = area.width as usize;
     let Some(detail) = &app.detail.current else {
@@ -30,7 +24,7 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 "No PR detail loaded. Press esc to go back.",
             )])
             .style(theme::normal()),
-            chunks[0],
+            layout.description,
         );
         return;
     };
@@ -74,18 +68,18 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         );
     }
 
-    app.detail.description_scroll = app
+    let description_scroll = app
         .detail
         .description_scroll
-        .min(max_scroll(summary.len(), chunks[0].height));
+        .min(max_scroll(summary.len(), layout.description.height));
     frame.render_widget(
         Paragraph::new(summary)
             .style(theme::normal())
-            .scroll((app.detail.description_scroll, 0)),
-        chunks[0],
+            .scroll((description_scroll, 0)),
+        layout.description,
     );
 
-    render_discussion(frame, chunks[1], app);
+    render_discussion(frame, layout.discussion, app);
 
     let footer = footer_lines(
         width,
@@ -98,10 +92,10 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             FooterItem::new("r", "refresh detail"),
         ],
     );
-    frame.render_widget(Paragraph::new(footer), chunks[2]);
+    frame.render_widget(Paragraph::new(footer), layout.footer);
 }
 
-fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
+fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let Some(detail) = &app.detail.current else {
         return;
     };
@@ -185,14 +179,14 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         &app.detail.discussion_status,
         app.detail.active_pane == DetailPane::Discussion,
     );
-    app.detail.discussion_scroll = app
+    let discussion_scroll = app
         .detail
         .discussion_scroll
         .min(max_scroll(discussion.len(), panes[0].height));
     frame.render_widget(
         Paragraph::new(discussion)
             .style(theme::normal())
-            .scroll((app.detail.discussion_scroll, 0)),
+            .scroll((discussion_scroll, 0)),
         panes[0],
     );
     frame.render_widget(
@@ -237,8 +231,8 @@ fn metadata_line(app: &App, detail: &crate::model::PullRequestDetail) -> Line<'s
         Span::styled("  review: ", theme::muted()),
         Span::styled(review_status.clone(), status_style(&review_status)),
         Span::styled(
-            format!("  {}", ci_text(pr.check_status.as_deref())),
-            ci_style(pr.check_status.as_deref()),
+            format!("  {}", ci_text(pr.check_status.as_ref())),
+            ci_style(pr.check_status.as_ref()),
         ),
     ]);
 

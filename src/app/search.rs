@@ -1,6 +1,6 @@
 use super::pull_request_status;
 use super::rows::DashboardSection;
-use crate::model::{Dashboard, PullRequest, RepoGroup};
+use crate::model::{CheckStatus, Dashboard, PullRequest, RepoGroup};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
@@ -93,7 +93,7 @@ fn candidate_text(section: &str, pr: &PullRequest) -> String {
         .chain(pr.review_requested.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(" ");
-    let check_status = pr.check_status.as_deref().unwrap_or_default();
+    let check_status = pr.check_status.as_ref().map_or("", CheckStatus::label);
     let review_status = pull_request_status(pr);
 
     format!(
@@ -122,7 +122,7 @@ impl SearchCandidate<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Reviewer, ReviewerState};
+    use crate::model::{CheckStatus, Reviewer, ReviewerState};
 
     #[test]
     fn empty_query_returns_all_prs_in_dashboard_order() {
@@ -149,7 +149,7 @@ mod tests {
         }];
         first.review_requested = vec!["dave".to_owned()];
         first.review_decision = Some("APPROVED".to_owned());
-        first.check_status = Some("passing".to_owned());
+        first.check_status = Some(CheckStatus::Passing);
         let dashboard = Dashboard::from_prs(vec![first], vec![pr("owner/web", 7, "Navbar", "bob")]);
 
         for query in [

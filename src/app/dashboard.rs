@@ -48,8 +48,8 @@ impl DashboardState {
 
     pub fn rows(&self, status: &AppStatus, config: &DashboardConfig) -> Vec<Row<'_>> {
         match status {
-            AppStatus::MissingGh => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
-            AppStatus::Unauthenticated(_) => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
+            AppStatus::MissingGh if self.data.is_empty() => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
+            AppStatus::Unauthenticated(_) if self.data.is_empty() => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
             AppStatus::GitHubOutage(_) if self.data.is_empty() => return github_outage_rows(),
             AppStatus::Timeout(_) if self.data.is_empty() => return vec![
                 Row::Message("GitHub is taking too long to answer.".to_owned()),
@@ -164,6 +164,7 @@ impl DashboardState {
 
     pub fn reset_after_error(&mut self) {
         self.data = Dashboard::default();
+        self.selected = 0;
         self.close_search();
     }
 
@@ -192,10 +193,6 @@ impl DashboardState {
         self.scroll = self.scroll.saturating_sub(1);
     }
 
-    pub fn clamp_scroll(&mut self, max_scroll: u16) {
-        self.scroll = self.scroll.min(max_scroll);
-    }
-
     pub fn select(&mut self, index: usize, status: &AppStatus, config: &DashboardConfig) {
         self.selected = index;
         self.clamp_selection(status, config);
@@ -210,6 +207,7 @@ impl DashboardState {
         if !self.collapsed_groups.insert(repo.clone()) {
             self.collapsed_groups.remove(&repo);
         }
+        self.clamp_selection(status, config);
     }
 
     pub fn next_repo_page(&mut self, status: &AppStatus, config: &DashboardConfig) {
