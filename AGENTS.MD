@@ -97,5 +97,6 @@ Important data flow:
 
 ## Git and local files
 
+- Prefer small, independently reviewable pull requests, with one branch and PR per logical task. Split parallel work only when the changes are independent and unlikely to touch the same behavior or files; when tasks overlap or one depends on another, combine them into one coherent branch or implement them as sequential branches based on the preceding change to avoid conflicts and duplicated work.
 - Feature specs used to hand off work between coding sessions should live under `docs/specs/` and stay untracked unless maintainers explicitly decide to commit them.
 - `AGENTS.MD` is explicitly adopted as repository guidance if committed; until then, keep this ignored/untracked copy reviewed like source documentation.
