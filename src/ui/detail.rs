@@ -12,7 +12,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
+pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
     let layout = DetailLayout::new(area);
 
@@ -68,14 +68,14 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         );
     }
 
-    app.detail.description_scroll = app
+    let description_scroll = app
         .detail
         .description_scroll
         .min(max_scroll(summary.len(), layout.description.height));
     frame.render_widget(
         Paragraph::new(summary)
             .style(theme::normal())
-            .scroll((app.detail.description_scroll, 0)),
+            .scroll((description_scroll, 0)),
         layout.description,
     );
 
@@ -95,7 +95,7 @@ pub(super) fn render_detail(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     frame.render_widget(Paragraph::new(footer), layout.footer);
 }
 
-fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
+fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let Some(detail) = &app.detail.current else {
         return;
     };
@@ -179,14 +179,14 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) 
         &app.detail.discussion_status,
         app.detail.active_pane == DetailPane::Discussion,
     );
-    app.detail.discussion_scroll = app
+    let discussion_scroll = app
         .detail
         .discussion_scroll
         .min(max_scroll(discussion.len(), panes[0].height));
     frame.render_widget(
         Paragraph::new(discussion)
             .style(theme::normal())
-            .scroll((app.detail.discussion_scroll, 0)),
+            .scroll((discussion_scroll, 0)),
         panes[0],
     );
     frame.render_widget(

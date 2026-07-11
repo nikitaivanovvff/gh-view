@@ -16,7 +16,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 const DASHBOARD_VIEW_GAP: usize = 4;
 
-pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
+pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &App) {
     if app.show_dashboard_loading_screen() {
         render_dashboard_loading(frame, app.loading_frame);
         return;
@@ -27,8 +27,6 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         return;
     }
 
-    app.clamp_selection();
-
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -36,6 +34,7 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         .split(area);
 
     let rows = app.rows();
+    let selected = app.dashboard.selected.min(rows.len().saturating_sub(1));
     let width = chunks[0].width as usize;
     let mut lines = Vec::new();
 
@@ -79,7 +78,7 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 ..
             } => {
                 lines.push(group_line(
-                    index == app.dashboard.selected,
+                    index == selected,
                     repo,
                     *count,
                     *open,
@@ -88,23 +87,25 @@ pub(super) fn render_dashboard(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 ));
             }
             Row::Pr(pr) => {
-                let selected = index == app.dashboard.selected;
-                lines.push(pr_line(selected, pr, width));
-                lines.push(branch_line(selected, pr, app.config().nerd_fonts));
-                lines.push(reviewers_line(selected, pr));
+                let is_selected = index == selected;
+                lines.push(pr_line(is_selected, pr, width));
+                lines.push(branch_line(is_selected, pr, app.config().nerd_fonts));
+                lines.push(reviewers_line(is_selected, pr));
             }
             Row::Message(message) => {
-                lines.push(message_line(index == app.dashboard.selected, message));
+                lines.push(message_line(index == selected, message));
             }
         }
     }
 
-    app.dashboard
-        .clamp_scroll(max_scroll(lines.len(), chunks[0].height));
+    let scroll = app
+        .dashboard
+        .scroll
+        .min(max_scroll(lines.len(), chunks[0].height));
     frame.render_widget(
         Paragraph::new(lines)
             .style(theme::normal())
-            .scroll((app.dashboard.scroll, 0)),
+            .scroll((scroll, 0)),
         chunks[0],
     );
     frame.render_widget(
