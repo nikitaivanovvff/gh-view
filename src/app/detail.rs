@@ -166,6 +166,9 @@ impl DetailState {
         match result {
             Ok(mut discussion) => {
                 if let Some(detail) = &mut self.current {
+                    detail
+                        .discussion
+                        .retain(|item| !matches!(item.kind, DiscussionKind::ReviewThread { .. }));
                     detail.discussion.append(&mut discussion);
                     sort_discussion(&mut detail.discussion);
                 }
@@ -226,4 +229,106 @@ fn sort_discussion(discussion: &mut [DiscussionItem]) {
             .cmp(&right.created_at)
             .then_with(|| left.url.cmp(&right.url))
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discussion_result_replaces_existing_review_threads() {
+        let mut state = detail_state();
+        state.apply_discussion_result(Ok(vec![discussion(
+            DiscussionKind::ReviewThread { resolved: true },
+            "new-thread",
+        )]));
+
+        let discussion = &state.current.as_ref().unwrap().discussion;
+        assert_eq!(discussion.len(), 2);
+        assert_eq!(discussion[0].body, "issue-comment");
+        assert_eq!(discussion[1].body, "new-thread");
+    }
+
+    #[test]
+    fn detail_and_discussion_results_merge_in_either_completion_order() {
+        for discussion_first in [false, true] {
+            let mut state = detail_state();
+            let loaded = detail(vec![discussion(
+                DiscussionKind::IssueComment,
+                "loaded-comment",
+            )]);
+            let threads = vec![discussion(
+                DiscussionKind::ReviewThread { resolved: false },
+                "fresh-thread",
+            )];
+
+            if discussion_first {
+                state.apply_discussion_result(Ok(threads));
+                state.apply_detail_result(Ok(loaded));
+            } else {
+                state.apply_detail_result(Ok(loaded));
+                state.apply_discussion_result(Ok(threads));
+            }
+
+            let discussion = &state.current.as_ref().unwrap().discussion;
+            assert_eq!(discussion.len(), 2);
+            assert_eq!(discussion[0].body, "loaded-comment");
+            assert_eq!(discussion[1].body, "fresh-thread");
+        }
+    }
+
+    fn detail_state() -> DetailState {
+        let mut state = DetailState::new();
+        state.current = Some(detail(vec![
+            discussion(DiscussionKind::IssueComment, "issue-comment"),
+            discussion(
+                DiscussionKind::ReviewThread { resolved: false },
+                "old-thread",
+            ),
+        ]));
+        state
+    }
+
+    fn detail(discussion: Vec<DiscussionItem>) -> PullRequestDetail {
+        PullRequestDetail {
+            pr: PullRequest {
+                repo: "owner/repo".to_owned(),
+                number: 1,
+                title: "Title".to_owned(),
+                author: "author".to_owned(),
+                head_ref: "branch".to_owned(),
+                url: "https://example.test/pr/1".to_owned(),
+                updated_at: "2026-01-01T00:00:00Z".to_owned(),
+                state: "OPEN".to_owned(),
+                is_draft: false,
+                review_decision: None,
+                check_status: None,
+                reviewers: Vec::new(),
+                review_requested: Vec::new(),
+            },
+            body: String::new(),
+            state: "OPEN".to_owned(),
+            mergeable: None,
+            head_ref: "branch".to_owned(),
+            base_ref: "main".to_owned(),
+            reviews: Vec::new(),
+            discussion,
+        }
+    }
+
+    fn discussion(kind: DiscussionKind, body: &str) -> DiscussionItem {
+        DiscussionItem {
+            kind,
+            author: "author".to_owned(),
+            body: body.to_owned(),
+            created_at: match body {
+                "issue-comment" | "loaded-comment" => "2026-01-01T00:00:00Z",
+                _ => "2026-01-02T00:00:00Z",
+            }
+            .to_owned(),
+            url: String::new(),
+            replies: Vec::new(),
+            code_context: None,
+        }
+    }
 }
