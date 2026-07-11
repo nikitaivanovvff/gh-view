@@ -139,12 +139,7 @@ impl DetailState {
                         loaded_detail.pr.review_decision =
                             current_detail.pr.review_decision.clone();
                     }
-                    if loaded_detail
-                        .pr
-                        .check_status
-                        .as_deref()
-                        .is_none_or(str::is_empty)
-                    {
+                    if loaded_detail.pr.check_status.is_none() {
                         loaded_detail.pr.check_status = current_detail.pr.check_status.clone();
                     }
                     loaded_detail

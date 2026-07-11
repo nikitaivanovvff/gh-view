@@ -522,7 +522,7 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
     } else {
         theme::muted()
     };
-    let ci_text = ci_text(pr.check_status.as_deref());
+    let ci_text = ci_text(pr.check_status.as_ref());
     let status_width = 17;
     let indent = "    ";
     let right_width = 12;
@@ -558,7 +558,7 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
         Span::raw(" ".repeat(padding)),
         Span::styled(format!("{age_text:>6}"), age_style),
         Span::raw("   "),
-        Span::styled(ci_text, ci_style(pr.check_status.as_deref())),
+        Span::styled(ci_text, ci_style(pr.check_status.as_ref())),
     ])
 }
 

@@ -231,8 +231,8 @@ fn metadata_line(app: &App, detail: &crate::model::PullRequestDetail) -> Line<'s
         Span::styled("  review: ", theme::muted()),
         Span::styled(review_status.clone(), status_style(&review_status)),
         Span::styled(
-            format!("  {}", ci_text(pr.check_status.as_deref())),
-            ci_style(pr.check_status.as_deref()),
+            format!("  {}", ci_text(pr.check_status.as_ref())),
+            ci_style(pr.check_status.as_ref()),
         ),
     ]);
 

@@ -1,6 +1,6 @@
 use crate::model::{
-    CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind, DiscussionReply,
-    PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
+    CheckStatus, CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind,
+    DiscussionReply, PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
 };
 use serde::Deserialize;
 
@@ -408,7 +408,7 @@ impl DashboardSearchPullRequest {
                 .nodes
                 .first()
                 .and_then(|node| node.commit.status_check_rollup.as_ref())
-                .and_then(|rollup| dashboard_check_status(&rollup.state)),
+                .and_then(|rollup| CheckStatus::from_rollup_state(&rollup.state)),
             reviewers,
             review_requested,
         }
@@ -542,16 +542,6 @@ impl DetailPullRequest {
     }
 }
 
-fn dashboard_check_status(state: &str) -> Option<String> {
-    match state {
-        "SUCCESS" => Some("passing".to_owned()),
-        "FAILURE" | "ERROR" => Some("failing".to_owned()),
-        "PENDING" | "EXPECTED" => Some("pending".to_owned()),
-        "" => None,
-        _ => Some("pending".to_owned()),
-    }
-}
-
 fn upsert_reviewer(reviewers: &mut Vec<Reviewer>, reviewer: Reviewer) {
     if let Some(existing) = reviewers
         .iter_mut()
@@ -636,39 +626,15 @@ fn parse_hunk_start(part: &str) -> Option<u64> {
         .ok()
 }
 
-fn summarize_checks(checks: &[CheckRun]) -> Option<String> {
-    if checks.is_empty() {
-        return None;
-    }
-
-    let mut has_failure = false;
-    let mut has_pending = false;
-
-    for check in checks {
-        let value = check
+fn summarize_checks(checks: &[CheckRun]) -> Option<CheckStatus> {
+    CheckStatus::summarize(checks.iter().map(|check| {
+        check
             .conclusion
             .as_deref()
             .or(check.state.as_deref())
             .or(check.status.as_deref())
             .unwrap_or_default()
-            .to_ascii_uppercase();
-
-        match value.as_str() {
-            "FAILURE" | "FAILED" | "ERROR" | "ACTION_REQUIRED" | "CANCELLED" | "TIMED_OUT" => {
-                has_failure = true;
-            }
-            "SUCCESS" | "COMPLETED" | "SKIPPED" | "NEUTRAL" => {}
-            _ => has_pending = true,
-        }
-    }
-
-    if has_failure {
-        Some("failing".to_owned())
-    } else if has_pending {
-        Some("pending".to_owned())
-    } else {
-        Some("passing".to_owned())
-    }
+    }))
 }
 
 #[cfg(test)]
@@ -684,7 +650,7 @@ mod tests {
                 state: None,
                 status: None,
             }]),
-            Some("passing".to_owned())
+            Some(CheckStatus::Passing)
         );
         assert_eq!(
             summarize_checks(&[CheckRun {
@@ -692,7 +658,7 @@ mod tests {
                 state: None,
                 status: None,
             }]),
-            Some("failing".to_owned())
+            Some(CheckStatus::Failing)
         );
         assert_eq!(
             summarize_checks(&[CheckRun {
@@ -700,7 +666,7 @@ mod tests {
                 state: Some("IN_PROGRESS".to_owned()),
                 status: None,
             }]),
-            Some("pending".to_owned())
+            Some(CheckStatus::Pending)
         );
         assert_eq!(
             summarize_checks(&[
@@ -715,7 +681,7 @@ mod tests {
                     status: None,
                 }
             ]),
-            Some("failing".to_owned())
+            Some(CheckStatus::Failing)
         );
     }
 
@@ -764,7 +730,7 @@ mod tests {
         assert_eq!(pr.author, "alice");
         assert_eq!(pr.head_ref, "feature");
         assert_eq!(pr.state, "OPEN");
-        assert_eq!(pr.check_status.as_deref(), Some("passing"));
+        assert_eq!(pr.check_status, Some(CheckStatus::Passing));
     }
 
     #[test]
@@ -828,7 +794,7 @@ mod tests {
         assert_eq!(pr.author, "carol");
         assert_eq!(pr.head_ref, "feature/add");
         assert_eq!(pr.review_decision.as_deref(), Some("REVIEW_REQUIRED"));
-        assert_eq!(pr.check_status.as_deref(), Some("passing"));
+        assert_eq!(pr.check_status, Some(CheckStatus::Passing));
         assert_eq!(pr.review_requested, vec!["alice".to_owned()]);
         assert_eq!(
             pr.reviewers,

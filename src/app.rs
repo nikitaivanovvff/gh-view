@@ -610,7 +610,7 @@ mod tests {
     use super::*;
     use crate::github::GhStatus;
     use crate::model::{
-        DiscussionItem, DiscussionKind, PullRequestDetail, Reviewer, ReviewerState,
+        CheckStatus, DiscussionItem, DiscussionKind, PullRequestDetail, Reviewer, ReviewerState,
     };
     use anyhow::{Result, anyhow};
     use std::sync::{
@@ -1195,7 +1195,7 @@ mod tests {
         let mut source = TestSource::ok();
         let mut loaded = detail(pr("owner/repo", 1));
         loaded.pr.review_decision = Some(String::new());
-        loaded.pr.check_status = Some(String::new());
+        loaded.pr.check_status = None;
         source.detail = Ok(loaded);
         let mut app = App::with_default_config(Box::new(source));
 
@@ -1207,7 +1207,7 @@ mod tests {
 
         let pr = &app.detail.current.as_ref().unwrap().pr;
         assert_eq!(pr.review_decision.as_deref(), Some("APPROVED"));
-        assert_eq!(pr.check_status.as_deref(), Some("passing"));
+        assert_eq!(pr.check_status, Some(CheckStatus::Passing));
     }
 
     #[test]
@@ -1284,7 +1284,7 @@ mod tests {
             state: "OPEN".to_owned(),
             is_draft: false,
             review_decision: Some("APPROVED".to_owned()),
-            check_status: Some("passing".to_owned()),
+            check_status: Some(CheckStatus::Passing),
             reviewers: vec![Reviewer {
                 login: "reviewer".to_owned(),
                 state: ReviewerState::Approved,
