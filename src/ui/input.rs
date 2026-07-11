@@ -219,6 +219,14 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App, mouse_layout: &MouseLayout) ->
                 app.previous_search_match();
                 true
             }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let Some(MouseTarget::SearchMatch(index)) = target else {
+                    return false;
+                };
+                app.select_search_match(index);
+                app.open_selected_search_match();
+                true
+            }
             _ => false,
         };
     }
@@ -662,6 +670,26 @@ mod tests {
         assert_continue_changed(key(KeyCode::Enter, &mut app), true);
         assert_eq!(app.view, AppView::Detail);
         assert!(!app.search_is_open());
+    }
+
+    #[test]
+    fn search_result_click_opens_match() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.open_search();
+        let expected = app.search_matches()[0].pr.clone();
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 16, 12, &mut app),
+            true,
+        );
+
+        assert_eq!(app.view, AppView::Detail);
+        assert!(!app.search_is_open());
+        assert_eq!(
+            app.detail.current.as_ref().map(|detail| &detail.pr),
+            Some(&expected)
+        );
     }
 
     #[test]
