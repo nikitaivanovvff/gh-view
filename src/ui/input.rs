@@ -1,25 +1,32 @@
-use super::dashboard::{dashboard_section_at_screen_position, row_index_at_screen_line};
-use super::layout::DetailLayout;
+use super::layout::{MouseLayout, MouseTarget};
 use super::theme;
-use super::theme_picker;
-use crate::app::{App, AppView, DashboardSection, DetailPane};
+use crate::app::{App, AppView, DashboardSection};
 use crate::github::MockErrorMode;
 use anyhow::Result;
 use crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use crossterm::terminal;
-use ratatui::layout::Rect;
+use ratatui::layout::Position;
 
 pub(super) enum InputOutcome {
     Continue(bool),
     Quit,
 }
 
-pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> {
+pub(super) fn handle_event(
+    event: Event,
+    app: &mut App,
+    mouse_layout: &MouseLayout,
+) -> Result<InputOutcome> {
     let key = match event {
         Event::Key(key) => key,
-        Event::Mouse(mouse) => return Ok(InputOutcome::Continue(handle_mouse(mouse, app)?)),
+        Event::Mouse(mouse) => {
+            return Ok(InputOutcome::Continue(handle_mouse(
+                mouse,
+                app,
+                mouse_layout,
+            )));
+        }
         Event::Resize(_, _) => return Ok(InputOutcome::Continue(true)),
         _ => return Ok(InputOutcome::Continue(false)),
     };
@@ -196,18 +203,14 @@ pub(super) fn handle_event(event: Event, app: &mut App) -> Result<InputOutcome> 
     Ok(InputOutcome::Continue(changed))
 }
 
-fn handle_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
+fn handle_mouse(mouse: MouseEvent, app: &mut App, mouse_layout: &MouseLayout) -> bool {
+    let target = mouse_layout.target_at(Position::new(mouse.column, mouse.row));
     if app.theme_picker_is_open() {
-        let (width, height) = terminal::size()?;
-        return Ok(handle_theme_picker_mouse(
-            mouse,
-            app,
-            Rect::new(0, 0, width, height),
-        ));
+        return handle_theme_picker_mouse(mouse, app, target);
     }
 
     if app.search_is_open() {
-        return Ok(match mouse.kind {
+        return match mouse.kind {
             MouseEventKind::ScrollDown => {
                 app.next_search_match();
                 true
@@ -217,18 +220,20 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
                 true
             }
             _ => false,
-        });
+        };
     }
 
-    let changed = match app.view {
-        AppView::Dashboard => handle_dashboard_mouse(mouse, app),
-        AppView::Detail => handle_detail_mouse(mouse, app)?,
-    };
-
-    Ok(changed)
+    match app.view {
+        AppView::Dashboard => handle_dashboard_mouse(mouse, app, target),
+        AppView::Detail => handle_detail_mouse(mouse, app, target),
+    }
 }
 
-fn handle_theme_picker_mouse(mouse: MouseEvent, app: &mut App, area: Rect) -> bool {
+fn handle_theme_picker_mouse(
+    mouse: MouseEvent,
+    app: &mut App,
+    target: Option<MouseTarget>,
+) -> bool {
     match mouse.kind {
         MouseEventKind::ScrollDown => {
             app.next_theme(theme::theme_count());
@@ -239,14 +244,16 @@ fn handle_theme_picker_mouse(mouse: MouseEvent, app: &mut App, area: Rect) -> bo
             true
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            theme_picker::theme_index_at_position(area, mouse.column, mouse.row)
-                .is_some_and(|index| app.select_theme(index, theme::theme_count()))
+            let Some(MouseTarget::Theme(index)) = target else {
+                return false;
+            };
+            app.select_theme(index, theme::theme_count())
         }
         _ => false,
     }
 }
 
-fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App) -> bool {
+fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App, target: Option<MouseTarget>) -> bool {
     match mouse.kind {
         MouseEventKind::ScrollDown => {
             app.scroll_dashboard_down();
@@ -257,19 +264,12 @@ fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App) -> bool {
             true
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if let Some(section) =
-                dashboard_section_at_screen_position(app, mouse.column, mouse.row)
-            {
+            if let Some(MouseTarget::DashboardSection(section)) = target {
                 return app.show_dashboard_section(section);
             }
 
             let rows = app.rows();
-            let Some(index) = row_index_at_screen_line(
-                &rows,
-                mouse.row,
-                app.dashboard.scroll,
-                app.config().dashboard.separate_views,
-            ) else {
+            let Some(MouseTarget::DashboardRow(index)) = target else {
                 return false;
             };
             let opens_selected_pr = index == app.dashboard.selected
@@ -288,33 +288,28 @@ fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App) -> bool {
     }
 }
 
-fn handle_detail_mouse(mouse: MouseEvent, app: &mut App) -> Result<bool> {
-    let Some(pane) = detail_pane_at_row(mouse.row)? else {
-        return Ok(false);
+fn handle_detail_mouse(mouse: MouseEvent, app: &mut App, target: Option<MouseTarget>) -> bool {
+    let Some(MouseTarget::DetailPane(pane)) = target else {
+        return false;
     };
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
             app.focus_detail_pane(pane);
             app.scroll_active_down();
-            Ok(true)
+            true
         }
         MouseEventKind::ScrollUp => {
             app.focus_detail_pane(pane);
             app.scroll_active_up();
-            Ok(true)
+            true
         }
         MouseEventKind::Down(MouseButton::Left) => {
             app.focus_detail_pane(pane);
-            Ok(true)
+            true
         }
-        _ => Ok(false),
+        _ => false,
     }
-}
-
-fn detail_pane_at_row(row: u16) -> Result<Option<DetailPane>> {
-    let (width, height) = terminal::size()?;
-    Ok(DetailLayout::new(Rect::new(0, 0, width, height)).pane_at_row(row))
 }
 
 fn mock_error_mode_for_key(
@@ -349,8 +344,10 @@ mod tests {
     use crate::config::Config;
     use crate::github::{GhStatus, MockErrorMode, MockGhClient, PullRequestSource};
     use crate::model::{PullRequest, PullRequestDetail};
+    use crate::ui::render::render;
     use anyhow::Result;
     use crossterm::event::{KeyEvent, KeyEventState, KeyModifiers, MouseEvent};
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[derive(Clone)]
     struct EmptySource;
@@ -403,7 +400,7 @@ mod tests {
         let mut app = App::with_default_config(Box::new(EmptySource));
 
         assert_continue_changed(
-            handle_event(Event::Resize(120, 40), &mut app).unwrap(),
+            handle_event(Event::Resize(120, 40), &mut app, &MouseLayout::default()).unwrap(),
             true,
         );
         assert_continue_changed(
@@ -415,6 +412,7 @@ mod tests {
                     state: KeyEventState::NONE,
                 }),
                 &mut app,
+                &MouseLayout::default(),
             )
             .unwrap(),
             false,
@@ -618,22 +616,32 @@ mod tests {
     #[test]
     fn dashboard_theme_picker_previews_clicked_theme() {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
-        let area = Rect::new(0, 0, 100, 30);
         app.open_theme_picker();
-        let popup = theme_picker::picker_area(area).unwrap();
 
         assert!(handle_theme_picker_mouse(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: popup.x + 2,
-                row: popup.y + 5,
+                column: 0,
+                row: 0,
                 modifiers: KeyModifiers::NONE,
             },
             &mut app,
-            area,
+            Some(MouseTarget::Theme(2)),
         ));
         assert_eq!(app.selected_theme_index(), 2);
         assert_eq!(app.active_theme_index(), 2);
+
+        assert!(!handle_theme_picker_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(MouseTarget::DashboardRow(1)),
+        ));
+        assert_eq!(app.selected_theme_index(), 2);
     }
 
     #[test]
@@ -678,14 +686,29 @@ mod tests {
     }
 
     fn key(code: KeyCode, app: &mut App) -> InputOutcome {
-        handle_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)), app).unwrap()
+        handle_event(
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            app,
+            &MouseLayout::default(),
+        )
+        .unwrap()
     }
 
     fn ctrl_key(code: KeyCode, app: &mut App) -> InputOutcome {
-        handle_event(Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL)), app).unwrap()
+        handle_event(
+            Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL)),
+            app,
+            &MouseLayout::default(),
+        )
+        .unwrap()
     }
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16, app: &mut App) -> InputOutcome {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut mouse_layout = MouseLayout::default();
+        terminal
+            .draw(|frame| mouse_layout = render(frame, app))
+            .unwrap();
         handle_event(
             Event::Mouse(MouseEvent {
                 kind,
@@ -694,6 +717,7 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             }),
             app,
+            &mouse_layout,
         )
         .unwrap()
     }

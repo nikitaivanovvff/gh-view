@@ -1,4 +1,5 @@
 use super::input::{InputOutcome, handle_event};
+use super::layout::MouseLayout;
 use super::render::render;
 use crate::app::App;
 use crate::config::Config;
@@ -102,6 +103,7 @@ impl Drop for TerminalGuard {
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     let mut needs_draw = true;
+    let mut mouse_layout = MouseLayout::default();
     let loading_tick = Duration::from_millis(200);
     let mut last_loading_tick = Instant::now();
 
@@ -117,12 +119,12 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
         }
 
         if needs_draw {
-            terminal.draw(|frame| render(frame, app))?;
+            terminal.draw(|frame| mouse_layout = render(frame, app))?;
             needs_draw = false;
         }
 
         if event::poll(Duration::from_millis(200))? {
-            match handle_event(event::read()?, app)? {
+            match handle_event(event::read()?, app, &mouse_layout)? {
                 InputOutcome::Continue(changed) => needs_draw |= changed,
                 InputOutcome::Quit => return Ok(()),
             }

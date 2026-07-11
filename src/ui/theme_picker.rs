@@ -1,3 +1,4 @@
+use super::layout::{MouseLayout, MouseTarget};
 use super::text::truncate;
 use super::theme;
 use crate::app::App;
@@ -6,7 +7,11 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-pub(super) fn render_theme_picker(frame: &mut ratatui::Frame<'_>, app: &App) {
+pub(super) fn render_theme_picker(
+    frame: &mut ratatui::Frame<'_>,
+    app: &App,
+    mouse_layout: &mut MouseLayout,
+) {
     let area = frame.area();
     let Some(popup) = picker_area(area) else {
         return;
@@ -47,6 +52,19 @@ pub(super) fn render_theme_picker(frame: &mut ratatui::Frame<'_>, app: &App) {
             line = line.style(theme::selection());
         }
         lines.push(line);
+
+        let row = popup.y.saturating_add(3).saturating_add(index as u16);
+        if row < popup.bottom().saturating_sub(1) {
+            mouse_layout.push(
+                Rect::new(
+                    popup.x.saturating_add(1),
+                    row,
+                    popup.width.saturating_sub(2),
+                    1,
+                ),
+                MouseTarget::Theme(index),
+            );
+        }
     }
 
     lines.push(rule(inner_width));
@@ -88,16 +106,6 @@ pub(super) fn picker_area(area: Rect) -> Option<Rect> {
     })
 }
 
-pub(super) fn theme_index_at_position(area: Rect, column: u16, row: u16) -> Option<usize> {
-    let popup = picker_area(area)?;
-    if column <= popup.x || column >= popup.right().saturating_sub(1) {
-        return None;
-    }
-
-    let index = row.checked_sub(popup.y.saturating_add(3))? as usize;
-    (index < theme::theme_count()).then_some(index)
-}
-
 fn preview_line(width: usize) -> Line<'static> {
     let title = truncate("#42 Ship theme picker", width.saturating_sub(36).max(1));
     let padding = width.saturating_sub(title.chars().count() + 33).max(1);
@@ -115,33 +123,4 @@ fn preview_line(width: usize) -> Line<'static> {
 
 fn rule(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), theme::rule()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn theme_rows_are_clickable_inside_picker() {
-        let area = Rect::new(0, 0, 100, 30);
-        let popup = picker_area(area).unwrap();
-
-        assert_eq!(
-            theme_index_at_position(area, popup.x + 1, popup.y + 3),
-            Some(0)
-        );
-        assert_eq!(
-            theme_index_at_position(
-                area,
-                popup.right().saturating_sub(2),
-                popup.y + 3 + theme::theme_count() as u16 - 1,
-            ),
-            Some(theme::theme_count() - 1)
-        );
-        assert_eq!(theme_index_at_position(area, popup.x, popup.y + 3), None);
-        assert_eq!(
-            theme_index_at_position(area, popup.x + 1, popup.y + 2),
-            None
-        );
-    }
 }

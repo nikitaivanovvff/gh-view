@@ -1,10 +1,12 @@
 use super::dashboard::render_dashboard;
 use super::detail::render_detail;
+use super::layout::MouseLayout;
 use super::theme;
 use super::theme_picker::render_theme_picker;
 use crate::app::{App, AppView};
 
-pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) {
+pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
+    let mut mouse_layout = MouseLayout::default();
     theme::set_active_theme(app.active_theme_index());
     let area = frame.area();
     frame.render_widget(
@@ -13,20 +15,31 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
 
     match app.view {
-        AppView::Dashboard => render_dashboard(frame, app),
-        AppView::Detail => render_detail(frame, app),
+        AppView::Dashboard => render_dashboard(frame, app, &mut mouse_layout),
+        AppView::Detail => render_detail(frame, app, &mut mouse_layout),
     }
 
     if app.theme_picker_is_open() {
-        render_theme_picker(frame, app);
+        render_theme_picker(frame, app, &mut mouse_layout);
     }
+
+    mouse_layout
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{DashboardSection, DetailPane};
+    use crate::config::Config;
     use crate::github::MockGhClient;
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, layout::Position};
+
+    fn draw_layout(app: &App, width: u16, height: u16) -> MouseLayout {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut layout = MouseLayout::default();
+        terminal.draw(|frame| layout = render(frame, app)).unwrap();
+        layout
+    }
 
     #[test]
     fn constrained_dashboard_render_does_not_mutate_selection_or_scroll() {
@@ -35,9 +48,126 @@ mod tests {
         app.dashboard.scroll = u16::MAX;
         let mut terminal = Terminal::new(TestBackend::new(20, 3)).unwrap();
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, &app);
+            })
+            .unwrap();
 
         assert_eq!(app.dashboard.selected, usize::MAX);
         assert_eq!(app.dashboard.scroll, u16::MAX);
+    }
+
+    #[test]
+    fn dashboard_layout_tracks_rendered_rows_and_excludes_chrome() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+
+        let layout = draw_layout(&app, 100, 30);
+
+        assert_eq!(layout.target_at(Position::new(4, 0)), None);
+        assert_eq!(layout.target_at(Position::new(4, 2)), None);
+        assert_eq!(
+            layout.target_at(Position::new(4, 4)),
+            Some(super::super::layout::MouseTarget::DashboardRow(1))
+        );
+        for row in 5..=7 {
+            assert_eq!(
+                layout.target_at(Position::new(4, row)),
+                Some(super::super::layout::MouseTarget::DashboardRow(2))
+            );
+        }
+        assert_eq!(layout.target_at(Position::new(4, 28)), None);
+
+        app.dashboard.scroll = 6;
+        let layout = draw_layout(&app, 100, 8);
+        assert_eq!(
+            layout.target_at(Position::new(4, 0)),
+            Some(super::super::layout::MouseTarget::DashboardRow(2))
+        );
+        assert_eq!(
+            layout.target_at(Position::new(4, 1)),
+            Some(super::super::layout::MouseTarget::DashboardRow(2))
+        );
+        assert_ne!(
+            layout.target_at(Position::new(4, 2)),
+            Some(super::super::layout::MouseTarget::DashboardRow(2))
+        );
+    }
+
+    #[test]
+    fn separate_dashboard_labels_use_exact_ranges() {
+        let mut config = Config::default();
+        config.dashboard.separate_views = true;
+        let mut app = App::new(Box::new(MockGhClient::new()), config);
+        app.refresh();
+        let first_label_width = format!(
+            "1 {} ({})",
+            DashboardSection::MyPrs.title().to_ascii_uppercase(),
+            app.dashboard.section_pr_count(DashboardSection::MyPrs)
+        )
+        .chars()
+        .count() as u16;
+
+        let layout = draw_layout(&app, 100, 30);
+
+        assert_eq!(
+            layout.target_at(Position::new(0, 2)),
+            Some(super::super::layout::MouseTarget::DashboardSection(
+                DashboardSection::MyPrs
+            ))
+        );
+        assert_eq!(layout.target_at(Position::new(first_label_width, 2)), None);
+        assert_eq!(
+            layout.target_at(Position::new(first_label_width + 4, 2)),
+            Some(super::super::layout::MouseTarget::DashboardSection(
+                DashboardSection::AwaitingReview
+            ))
+        );
+    }
+
+    #[test]
+    fn detail_and_theme_layouts_follow_rendered_areas_and_overlay_order() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.view = AppView::Detail;
+        let layout = draw_layout(&app, 100, 30);
+        assert_eq!(
+            layout.target_at(Position::new(5, 5)),
+            Some(super::super::layout::MouseTarget::DetailPane(
+                DetailPane::Description
+            ))
+        );
+        assert_eq!(layout.target_at(Position::new(5, 29)), None);
+
+        app.open_theme_picker();
+        let layout = draw_layout(&app, 100, 30);
+        let popup =
+            super::super::theme_picker::picker_area(ratatui::layout::Rect::new(0, 0, 100, 30))
+                .unwrap();
+        assert_eq!(
+            layout.target_at(Position::new(popup.x, popup.y + 3)),
+            Some(super::super::layout::MouseTarget::DetailPane(
+                DetailPane::Description
+            ))
+        );
+        assert_eq!(
+            layout.target_at(Position::new(popup.x + 1, popup.y + 3)),
+            Some(super::super::layout::MouseTarget::Theme(0))
+        );
+        assert_eq!(
+            layout.target_at(Position::new(popup.x + 1, popup.y + 2)),
+            Some(super::super::layout::MouseTarget::DetailPane(
+                DetailPane::Description
+            ))
+        );
+    }
+
+    #[test]
+    fn loading_dashboard_and_tiny_terminal_have_no_invalid_targets() {
+        let app = App::with_default_config(Box::new(MockGhClient::new()));
+        let layout = draw_layout(&app, 10, 2);
+
+        assert_eq!(layout.target_at(Position::new(0, 0)), None);
+        assert_eq!(layout.target_at(Position::new(9, 1)), None);
     }
 }
