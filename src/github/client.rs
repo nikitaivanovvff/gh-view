@@ -16,6 +16,12 @@ use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
 
+fn should_fallback_to_search(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| matches!(cause.downcast_ref::<GhError>(), Some(GhError::Command(_))))
+}
+
 #[derive(Clone)]
 pub struct GhClient {
     command: GhCommand,
@@ -160,29 +166,51 @@ impl PullRequestSource for GhClient {
     }
 
     fn fetch_my_prs(&self, login: &str) -> Result<Vec<PullRequest>> {
-        self.search_dashboard_graphql(&format!("is:pr is:open author:{login} archived:false"))
-            .or_else(|_| self.search_prs(&["--author", login]))
+        match self.search_dashboard_graphql(&format!("is:pr is:open author:{login} archived:false"))
+        {
+            Ok(prs) => Ok(prs),
+            Err(graphql_error) if should_fallback_to_search(&graphql_error) => {
+                self.search_prs(&["--author", login]).with_context(|| {
+                    format!("search fallback failed after GraphQL failure: {graphql_error}")
+                })
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn fetch_dashboard(&self, login: &str) -> Result<(Vec<PullRequest>, Vec<PullRequest>)> {
-        self.dashboard_graphql(login).or_else(|_| {
-            Ok((
-                self.search_prs(&["--author", login])?,
-                self.search_prs(&["--review-requested", login])?,
-            ))
-        })
+        match self.dashboard_graphql(login) {
+            Ok(dashboard) => Ok(dashboard),
+            Err(graphql_error) if should_fallback_to_search(&graphql_error) => (|| -> Result<_> {
+                Ok((
+                    self.search_prs(&["--author", login])?,
+                    self.search_prs(&["--review-requested", login])?,
+                ))
+            })()
+            .with_context(|| {
+                format!("search fallback failed after GraphQL failure: {graphql_error}")
+            }),
+            Err(error) => Err(error),
+        }
     }
 
     fn fetch_review_requests(&self, login: &str) -> Result<Vec<PullRequest>> {
-        self.search_dashboard_graphql(&format!(
+        let graphql_result = self.search_dashboard_graphql(&format!(
             "is:pr is:open review-requested:{login} archived:false"
-        ))
-        .map(|prs| {
-            prs.into_iter()
+        ));
+
+        match graphql_result {
+            Ok(prs) => Ok(prs
+                .into_iter()
                 .filter(|pr| pr.review_requested.iter().any(|reviewer| reviewer == login))
-                .collect()
-        })
-        .or_else(|_| self.search_prs(&["--review-requested", login]))
+                .collect()),
+            Err(graphql_error) if should_fallback_to_search(&graphql_error) => self
+                .search_prs(&["--review-requested", login])
+                .with_context(|| {
+                    format!("search fallback failed after GraphQL failure: {graphql_error}")
+                }),
+            Err(error) => Err(error),
+        }
     }
 
     fn fetch_pr_detail(&self, pr: &PullRequest) -> Result<PullRequestDetail> {
@@ -207,5 +235,42 @@ impl GhClient {
         S: AsRef<str>,
     {
         self.command.run(args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_fallback_to_search;
+    use crate::github::GhError;
+    use anyhow::{Context, anyhow};
+
+    #[test]
+    fn search_fallback_accepts_command_error_in_chain() {
+        let error = Err::<(), _>(GhError::Command("unsupported query".into()))
+            .context("GraphQL request failed")
+            .unwrap_err();
+
+        assert!(should_fallback_to_search(&error));
+    }
+
+    #[test]
+    fn search_fallback_rejects_preserved_error_categories() {
+        let errors = [
+            GhError::Missing("missing".into()),
+            GhError::Unauthenticated("unauthenticated".into()),
+            GhError::GitHubOutage("outage".into()),
+            GhError::Timeout("timeout".into()),
+        ];
+
+        for error in errors {
+            assert!(!should_fallback_to_search(&anyhow!(error)));
+        }
+    }
+
+    #[test]
+    fn search_fallback_rejects_non_gh_errors() {
+        let error = anyhow!("failed to parse gh GraphQL output").context("malformed JSON");
+
+        assert!(!should_fallback_to_search(&error));
     }
 }
