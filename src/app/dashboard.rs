@@ -48,8 +48,8 @@ impl DashboardState {
 
     pub fn rows(&self, status: &AppStatus, config: &DashboardConfig) -> Vec<Row<'_>> {
         match status {
-            AppStatus::MissingGh => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
-            AppStatus::Unauthenticated(_) => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
+            AppStatus::MissingGh if self.data.is_empty() => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
+            AppStatus::Unauthenticated(_) if self.data.is_empty() => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
             AppStatus::GitHubOutage(_) if self.data.is_empty() => return github_outage_rows(),
             AppStatus::Timeout(_) if self.data.is_empty() => return vec![
                 Row::Message("GitHub is taking too long to answer.".to_owned()),

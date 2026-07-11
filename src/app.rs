@@ -120,7 +120,9 @@ impl App {
             }
             Err(status) => {
                 self.status = status;
-                self.dashboard.reset_after_error();
+                if self.dashboard.data.is_empty() {
+                    self.dashboard.reset_after_error();
+                }
             }
         }
     }
@@ -709,6 +711,49 @@ mod tests {
             app.rows()
                 .iter()
                 .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+        );
+    }
+
+    #[test]
+    fn initial_refresh_failure_shows_error_state() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        app.dashboard.loading = true;
+
+        app.apply_refresh_result(Err(AppStatus::Error("load failed".to_owned())));
+
+        assert!(!app.dashboard.loading);
+        assert!(app.dashboard.data.is_empty());
+        assert!(app.dashboard_error_page().is_some());
+        assert!(matches!(app.rows().first(), Some(Row::Message(_))));
+    }
+
+    #[test]
+    fn refresh_failure_preserves_loaded_dashboard_state() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        app.refresh();
+        app.next();
+        app.toggle_selected_group();
+        app.open_search();
+        app.push_search_char('1');
+        app.dashboard.loading = true;
+        let selected = app.dashboard.selected;
+
+        app.apply_refresh_result(Err(AppStatus::MissingGh));
+
+        assert!(!app.dashboard.loading);
+        assert_eq!(app.status, AppStatus::MissingGh);
+        assert_eq!(app.dashboard.selected, selected);
+        assert_eq!(app.search_query(), Some("1"));
+        assert!(app.dashboard_error_page().is_none());
+        assert!(
+            app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+        );
+        assert!(
+            !app.rows()
+                .iter()
+                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
         );
     }
 
