@@ -4,6 +4,8 @@ use crate::model::{
 };
 use serde::Deserialize;
 
+type PullRequestPage = (Vec<PullRequest>, Option<String>);
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SearchPullRequest {
@@ -87,8 +89,8 @@ pub(super) struct DashboardResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DashboardData {
-    my_prs: DashboardSearchConnection,
-    review_requests: DashboardSearchConnection,
+    my_prs: Option<DashboardSearchConnection>,
+    review_requests: Option<DashboardSearchConnection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +104,16 @@ struct DashboardSearchData {
 struct DashboardSearchConnection {
     #[serde(default)]
     nodes: Vec<DashboardSearchPullRequest>,
+    #[serde(default)]
+    page_info: PageInfo,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageInfo {
+    #[serde(default)]
+    has_next_page: bool,
+    end_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,6 +229,8 @@ struct ReviewThreadsPullRequest {
 struct ReviewThreadConnection {
     #[serde(default)]
     nodes: Vec<ReviewThreadNode>,
+    #[serde(default)]
+    page_info: PageInfo,
 }
 
 #[derive(Debug, Deserialize)]
@@ -295,32 +309,45 @@ impl From<SearchPullRequest> for PullRequest {
 }
 
 impl DashboardSearchResponse {
-    pub(super) fn into_pull_requests(self) -> Vec<PullRequest> {
-        self.data.search.into_pull_requests()
+    pub(super) fn into_page(self) -> (Vec<PullRequest>, Option<String>) {
+        self.data.search.into_page()
     }
 }
 
 impl DashboardResponse {
-    pub(super) fn into_dashboard(self, login: &str) -> (Vec<PullRequest>, Vec<PullRequest>) {
-        let my_prs = self.data.my_prs.into_pull_requests();
-        let reviews = self
+    pub(super) fn into_page(self, login: &str) -> (PullRequestPage, PullRequestPage) {
+        let my_prs = self
+            .data
+            .my_prs
+            .map(DashboardSearchConnection::into_page)
+            .unwrap_or_default();
+        let (reviews, review_cursor) = self
             .data
             .review_requests
-            .into_pull_requests()
+            .map(DashboardSearchConnection::into_page)
+            .unwrap_or_default();
+        let reviews = reviews
             .into_iter()
             .filter(|pr| pr.review_requested.iter().any(|reviewer| reviewer == login))
             .collect();
 
-        (my_prs, reviews)
+        (my_prs, (reviews, review_cursor))
     }
 }
 
 impl DashboardSearchConnection {
-    fn into_pull_requests(self) -> Vec<PullRequest> {
-        self.nodes
+    fn into_page(self) -> (Vec<PullRequest>, Option<String>) {
+        let cursor = self
+            .page_info
+            .has_next_page
+            .then_some(self.page_info.end_cursor)
+            .flatten();
+        let prs = self
+            .nodes
             .into_iter()
             .map(DashboardSearchPullRequest::into_pull_request)
-            .collect()
+            .collect();
+        (prs, cursor)
     }
 }
 
@@ -399,15 +426,19 @@ impl DashboardActor {
 }
 
 impl ReviewThreadsResponse {
-    pub(super) fn into_discussion_items(self) -> Vec<DiscussionItem> {
-        self.data
-            .repository
-            .pull_request
-            .review_threads
+    pub(super) fn into_page(self) -> (Vec<DiscussionItem>, Option<String>) {
+        let connection = self.data.repository.pull_request.review_threads;
+        let cursor = connection
+            .page_info
+            .has_next_page
+            .then_some(connection.page_info.end_cursor)
+            .flatten();
+        let items = connection
             .nodes
             .into_iter()
             .filter_map(ReviewThreadNode::into_discussion_item)
-            .collect()
+            .collect();
+        (items, cursor)
     }
 }
 
@@ -788,9 +819,10 @@ mod tests {
         )
         .unwrap();
 
-        let prs = response.into_pull_requests();
+        let (prs, cursor) = response.into_page();
 
         assert_eq!(prs.len(), 1);
+        assert_eq!(cursor, None);
         let pr = &prs[0];
         assert_eq!(pr.repo, "owner/repo");
         assert_eq!(pr.author, "carol");
@@ -885,12 +917,14 @@ mod tests {
         )
         .unwrap();
 
-        let (my_prs, reviews) = response.into_dashboard("octocat");
+        let ((my_prs, my_cursor), (reviews, review_cursor)) = response.into_page("octocat");
 
         assert_eq!(my_prs.len(), 1);
+        assert_eq!(my_cursor, None);
         assert_eq!(my_prs[0].repo, "owner/mine");
         assert_eq!(my_prs[0].head_ref, "mine-branch");
         assert_eq!(reviews.len(), 1);
+        assert_eq!(review_cursor, None);
         assert_eq!(reviews[0].repo, "owner/review");
         assert_eq!(reviews[0].head_ref, "review-branch");
         assert_eq!(reviews[0].review_requested, vec!["octocat".to_owned()]);
@@ -997,8 +1031,9 @@ mod tests {
         )
         .unwrap();
 
-        let items = response.into_discussion_items();
+        let (items, cursor) = response.into_page();
         assert_eq!(items.len(), 1);
+        assert_eq!(cursor, None);
         assert_eq!(items[0].author, "alice");
         assert_eq!(items[0].replies.len(), 1);
         assert_eq!(items[0].replies[0].author, "nikita");
@@ -1010,6 +1045,25 @@ mod tests {
         assert_eq!(context.path, "src/main.rs");
         assert_eq!(context.highlighted_line, Some(42));
         assert!(context.lines.iter().any(|line| line.text == "new"));
+    }
+
+    #[test]
+    fn exposes_page_cursors_when_more_results_exist() {
+        let response: DashboardSearchResponse = serde_json::from_str(
+            r#"{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"next-page"}}}}"#,
+        )
+        .unwrap();
+        let (prs, cursor) = response.into_page();
+        assert!(prs.is_empty());
+        assert_eq!(cursor.as_deref(), Some("next-page"));
+
+        let response: ReviewThreadsResponse = serde_json::from_str(
+            r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"next-thread"}}}}}}"#,
+        )
+        .unwrap();
+        let (items, cursor) = response.into_page();
+        assert!(items.is_empty());
+        assert_eq!(cursor.as_deref(), Some("next-thread"));
     }
 
     #[test]

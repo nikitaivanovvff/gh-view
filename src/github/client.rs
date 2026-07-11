@@ -8,13 +8,13 @@ use self::types::{
 use super::{GhError, GhStatus, PullRequestSource};
 use crate::github::command::{GhCommand, command_error};
 use crate::github::queries::{
-    DETAIL_FIELDS, REVIEW_THREADS_QUERY, SEARCH_FIELDS, dashboard_query, dashboard_search_query,
+    DETAIL_FIELDS, SEARCH_FIELDS, dashboard_query, dashboard_search_query, review_threads_query,
     split_repo,
 };
 use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 fn should_fallback_to_search(error: &anyhow::Error) -> bool {
     error
@@ -64,15 +64,46 @@ impl GhClient {
     }
 
     fn search_dashboard_graphql(&self, query: &str) -> Result<Vec<PullRequest>> {
-        let graphql = dashboard_search_query(query);
-        let response: DashboardSearchResponse = self.graphql(graphql)?;
-        Ok(response.into_pull_requests())
+        let mut cursor = None;
+        let mut prs = Vec::new();
+        loop {
+            let response: DashboardSearchResponse =
+                self.graphql(dashboard_search_query(query, cursor.as_deref()))?;
+            let (page, next_cursor) = response.into_page();
+            prs.extend(page);
+            cursor = next_cursor;
+            if cursor.is_none() {
+                deduplicate_prs(&mut prs);
+                return Ok(prs);
+            }
+        }
     }
 
     fn dashboard_graphql(&self, login: &str) -> Result<(Vec<PullRequest>, Vec<PullRequest>)> {
-        let graphql = dashboard_query(login);
-        let response: DashboardResponse = self.graphql(graphql)?;
-        Ok(response.into_dashboard(login))
+        let mut my_cursor = Some(None::<String>);
+        let mut review_cursor = Some(None::<String>);
+        let mut my_prs = Vec::new();
+        let mut reviews = Vec::new();
+        while my_cursor.is_some() || review_cursor.is_some() {
+            let response: DashboardResponse = self.graphql(dashboard_query(
+                login,
+                my_cursor.as_ref().map(|cursor| cursor.as_deref()),
+                review_cursor.as_ref().map(|cursor| cursor.as_deref()),
+            ))?;
+            let ((my_page, next_my_cursor), (review_page, next_review_cursor)) =
+                response.into_page(login);
+            my_prs.extend(my_page);
+            reviews.extend(review_page);
+            if my_cursor.is_some() {
+                my_cursor = next_my_cursor.map(Some);
+            }
+            if review_cursor.is_some() {
+                review_cursor = next_review_cursor.map(Some);
+            }
+        }
+        deduplicate_prs(&mut my_prs);
+        deduplicate_prs(&mut reviews);
+        Ok((my_prs, reviews))
     }
 
     fn graphql<T: DeserializeOwned>(&self, graphql: String) -> Result<T> {
@@ -110,33 +141,46 @@ impl GhClient {
     fn review_threads(&self, pr: &PullRequest) -> Result<Vec<DiscussionItem>> {
         let (owner, name) = split_repo(&pr.repo)?;
         let number = pr.number.to_string();
-        let query_field = format!("query={REVIEW_THREADS_QUERY}");
         let owner_field = format!("owner={owner}");
         let name_field = format!("name={name}");
         let number_field = format!("number={number}");
 
-        let output = self.run_gh([
-            "api",
-            "graphql",
-            "-f",
-            &query_field,
-            "-F",
-            &owner_field,
-            "-F",
-            &name_field,
-            "-F",
-            &number_field,
-        ])?;
+        let mut cursor = None;
+        let mut items = Vec::new();
+        loop {
+            let query_field = format!("query={}", review_threads_query(cursor.as_deref()));
+            let output = self.run_gh([
+                "api",
+                "graphql",
+                "-f",
+                &query_field,
+                "-F",
+                &owner_field,
+                "-F",
+                &name_field,
+                "-F",
+                &number_field,
+            ])?;
 
-        if !output.status.success() {
-            bail!(GhError::from_command_output(command_error(&output)));
+            if !output.status.success() {
+                bail!(GhError::from_command_output(command_error(&output)));
+            }
+
+            let response: ReviewThreadsResponse = serde_json::from_slice(&output.stdout)
+                .context("failed to parse gh review threads GraphQL output")?;
+            let (page, next_cursor) = response.into_page();
+            items.extend(page);
+            cursor = next_cursor;
+            if cursor.is_none() {
+                return Ok(items);
+            }
         }
-
-        let response: ReviewThreadsResponse = serde_json::from_slice(&output.stdout)
-            .context("failed to parse gh review threads GraphQL output")?;
-        let items = response.into_discussion_items();
-        Ok(items)
     }
+}
+
+fn deduplicate_prs(prs: &mut Vec<PullRequest>) {
+    let mut seen = HashSet::new();
+    prs.retain(|pr| seen.insert((pr.repo.clone(), pr.number)));
 }
 
 impl PullRequestSource for GhClient {
@@ -240,8 +284,9 @@ impl GhClient {
 
 #[cfg(test)]
 mod tests {
-    use super::should_fallback_to_search;
+    use super::{deduplicate_prs, should_fallback_to_search};
     use crate::github::GhError;
+    use crate::model::PullRequest;
     use anyhow::{Context, anyhow};
 
     #[test]
@@ -272,5 +317,36 @@ mod tests {
         let error = anyhow!("failed to parse gh GraphQL output").context("malformed JSON");
 
         assert!(!should_fallback_to_search(&error));
+    }
+
+    #[test]
+    fn combines_pages_without_duplicate_pull_requests() {
+        let mut pages = vec![pr("owner/repo", 1), pr("owner/repo", 2)];
+        pages.extend([pr("owner/repo", 2), pr("other/repo", 1)]);
+
+        deduplicate_prs(&mut pages);
+
+        assert_eq!(pages.len(), 3);
+        assert_eq!(pages[0].number, 1);
+        assert_eq!(pages[1].number, 2);
+        assert_eq!(pages[2].repo, "other/repo");
+    }
+
+    fn pr(repo: &str, number: u64) -> PullRequest {
+        PullRequest {
+            repo: repo.to_owned(),
+            number,
+            title: String::new(),
+            author: String::new(),
+            head_ref: String::new(),
+            url: String::new(),
+            updated_at: String::new(),
+            state: String::new(),
+            is_draft: false,
+            review_decision: None,
+            check_status: None,
+            reviewers: Vec::new(),
+            review_requested: Vec::new(),
+        }
     }
 }
