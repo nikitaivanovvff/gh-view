@@ -292,6 +292,10 @@ impl App {
         self.dashboard.previous_search_match();
     }
 
+    pub fn select_search_match(&mut self, index: usize) {
+        self.dashboard.select_search_match(index);
+    }
+
     pub fn search_matches(&self) -> Vec<DashboardSearchMatch> {
         self.dashboard.search_matches()
     }

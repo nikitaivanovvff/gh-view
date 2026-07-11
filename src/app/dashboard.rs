@@ -331,6 +331,17 @@ impl DashboardState {
         search.selected = search.selected.saturating_sub(1);
     }
 
+    pub fn select_search_match(&mut self, index: usize) {
+        let len = self.search_matches().len();
+        let Some(search) = &mut self.search else {
+            return;
+        };
+
+        if index < len {
+            search.selected = index;
+        }
+    }
+
     pub fn search_matches(&self) -> Vec<DashboardSearchMatch> {
         let Some(search) = &self.search else {
             return Vec::new();

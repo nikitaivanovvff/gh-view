@@ -143,7 +143,7 @@ pub(super) fn render_dashboard(
     );
 
     if app.search_is_open() {
-        render_search_overlay(frame, app);
+        render_search_overlay(frame, app, mouse_layout);
     }
 }
 
@@ -231,7 +231,11 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     footer_lines(width, items)
 }
 
-fn render_search_overlay(frame: &mut ratatui::Frame<'_>, app: &App) {
+fn render_search_overlay(
+    frame: &mut ratatui::Frame<'_>,
+    app: &App,
+    mouse_layout: &mut MouseLayout,
+) {
     let area = frame.area();
     if area.width < 8 || area.height < 3 {
         return;
@@ -273,6 +277,16 @@ fn render_search_overlay(frame: &mut ratatui::Frame<'_>, app: &App) {
         } else {
             let start = selected.saturating_sub(match_rows.saturating_sub(1));
             for (index, item) in matches.iter().enumerate().skip(start).take(match_rows) {
+                let row = popup.y.saturating_add(1 + lines.len() as u16);
+                mouse_layout.push(
+                    Rect::new(
+                        popup.x.saturating_add(1),
+                        row,
+                        popup.width.saturating_sub(2),
+                        1,
+                    ),
+                    MouseTarget::SearchMatch(index),
+                );
                 lines.push(search_match_line(
                     index == selected,
                     item,

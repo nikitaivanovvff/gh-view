@@ -6,6 +6,7 @@ pub(super) enum MouseTarget {
     DashboardSection(DashboardSection),
     DashboardRow(usize),
     DetailPane(DetailPane),
+    SearchMatch(usize),
     Theme(usize),
 }
 
