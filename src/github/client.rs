@@ -6,7 +6,7 @@ use self::types::{
     SearchPullRequest,
 };
 use super::{GhError, GhStatus, PullRequestSource};
-use crate::github::command::{GhCommand, command_error};
+use crate::github::command::{CommandRunner, GhCommand, command_error};
 use crate::github::queries::{
     DETAIL_FIELDS, SEARCH_FIELDS, dashboard_query, dashboard_search_query, review_threads_query,
     split_repo,
@@ -14,7 +14,7 @@ use crate::github::queries::{
 use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 fn should_fallback_to_search(error: &anyhow::Error) -> bool {
     error
@@ -24,14 +24,19 @@ fn should_fallback_to_search(error: &anyhow::Error) -> bool {
 
 #[derive(Clone)]
 pub struct GhClient {
-    command: GhCommand,
+    command: Arc<dyn CommandRunner>,
 }
 
 impl GhClient {
     pub fn new(timeout_seconds: u64) -> Self {
         Self {
-            command: GhCommand::new(Duration::from_secs(timeout_seconds.max(1))),
+            command: Arc::new(GhCommand::new(Duration::from_secs(timeout_seconds.max(1)))),
         }
+    }
+
+    #[cfg(test)]
+    fn with_runner(command: Arc<dyn CommandRunner>) -> Self {
+        Self { command }
     }
 
     fn current_user_login(&self) -> Result<String> {
@@ -189,7 +194,18 @@ impl PullRequestSource for GhClient {
     }
 
     fn status(&self) -> GhStatus {
-        let Some(version) = self.command.version() else {
+        let Ok(output) = self.run_gh(["--version"]) else {
+            return GhStatus::Missing;
+        };
+        if !output.status.success() {
+            return GhStatus::Missing;
+        }
+        let Some(version) = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .map(str::trim)
+            .map(str::to_owned)
+        else {
             return GhStatus::Missing;
         };
 
@@ -278,16 +294,58 @@ impl GhClient {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        self.command.run(args)
+        self.command.run(
+            args.into_iter()
+                .map(|arg| arg.as_ref().to_owned())
+                .collect(),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{deduplicate_prs, should_fallback_to_search};
-    use crate::github::GhError;
+    use super::{GhClient, deduplicate_prs, should_fallback_to_search};
+    use crate::github::command::CommandRunner;
+    use crate::github::{GhError, PullRequestSource};
     use crate::model::PullRequest;
-    use anyhow::{Context, anyhow};
+    use anyhow::{Context, Result, anyhow};
+    use std::collections::VecDeque;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+    use std::sync::{Arc, Mutex};
+
+    enum ScriptedResult {
+        Output(Output),
+        Error(GhError),
+    }
+
+    struct ScriptedRunner {
+        results: Mutex<VecDeque<ScriptedResult>>,
+        calls: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl ScriptedRunner {
+        fn new(results: Vec<ScriptedResult>) -> Arc<Self> {
+            Arc::new(Self {
+                results: Mutex::new(results.into()),
+                calls: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn calls(&self) -> Vec<Vec<String>> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl CommandRunner for ScriptedRunner {
+        fn run(&self, args: Vec<String>) -> Result<Output> {
+            self.calls.lock().unwrap().push(args);
+            match self.results.lock().unwrap().pop_front().unwrap() {
+                ScriptedResult::Output(output) => Ok(output),
+                ScriptedResult::Error(error) => Err(anyhow!(error)),
+            }
+        }
+    }
 
     #[test]
     fn search_fallback_accepts_command_error_in_chain() {
@@ -320,6 +378,74 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_auth_failure_does_not_fall_back() {
+        let runner = ScriptedRunner::new(vec![ScriptedResult::Output(failure(
+            "authentication required; run gh auth login",
+        ))]);
+        let client = GhClient::with_runner(runner.clone());
+
+        let error = client.fetch_dashboard("octocat").unwrap_err();
+
+        assert!(matches!(
+            error.downcast_ref(),
+            Some(GhError::Unauthenticated(_))
+        ));
+        assert_graphql_call(&runner.calls()[0]);
+        assert_eq!(runner.calls().len(), 1);
+    }
+
+    #[test]
+    fn dashboard_timeout_does_not_fall_back() {
+        let runner = ScriptedRunner::new(vec![ScriptedResult::Error(GhError::Timeout(
+            "timed out".into(),
+        ))]);
+        let client = GhClient::with_runner(runner.clone());
+
+        let error = client.fetch_dashboard("octocat").unwrap_err();
+
+        assert!(matches!(error.downcast_ref(), Some(GhError::Timeout(_))));
+        assert_graphql_call(&runner.calls()[0]);
+        assert_eq!(runner.calls().len(), 1);
+    }
+
+    #[test]
+    fn dashboard_command_failure_invokes_search_fallbacks() {
+        let runner = ScriptedRunner::new(vec![
+            ScriptedResult::Output(failure("GraphQL query failed")),
+            ScriptedResult::Output(success("[]")),
+            ScriptedResult::Output(success("[]")),
+        ]);
+        let client = GhClient::with_runner(runner.clone());
+
+        let dashboard = client.fetch_dashboard("octocat").unwrap();
+
+        assert_eq!(dashboard, (Vec::new(), Vec::new()));
+        let calls = runner.calls();
+        assert_graphql_call(&calls[0]);
+        assert_eq!(calls[1], search_args("--author"));
+        assert_eq!(calls[2], search_args("--review-requested"));
+    }
+
+    #[test]
+    fn dashboard_fallback_failure_retains_graphql_context() {
+        let runner = ScriptedRunner::new(vec![
+            ScriptedResult::Output(failure("original GraphQL failure")),
+            ScriptedResult::Output(failure("fallback search failure")),
+        ]);
+        let client = GhClient::with_runner(runner.clone());
+
+        let error = client.fetch_dashboard("octocat").unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(message.contains("original GraphQL failure"));
+        assert!(message.contains("fallback search failure"));
+        let calls = runner.calls();
+        assert_graphql_call(&calls[0]);
+        assert_eq!(calls[1], search_args("--author"));
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
     fn combines_pages_without_duplicate_pull_requests() {
         let mut pages = vec![pr("owner/repo", 1), pr("owner/repo", 2)];
         pages.extend([pr("owner/repo", 2), pr("other/repo", 1)]);
@@ -348,5 +474,44 @@ mod tests {
             reviewers: Vec::new(),
             review_requested: Vec::new(),
         }
+    }
+
+    fn success(stdout: &str) -> Output {
+        output(0, stdout, "")
+    }
+
+    fn failure(stderr: &str) -> Output {
+        output(1, "", stderr)
+    }
+
+    fn output(code: i32, stdout: &str, stderr: &str) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    fn search_args(filter: &str) -> Vec<String> {
+        [
+            "search",
+            "prs",
+            "--state",
+            "open",
+            "--json",
+            crate::github::queries::SEARCH_FIELDS,
+            filter,
+            "octocat",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    }
+
+    fn assert_graphql_call(args: &[String]) {
+        assert_eq!(&args[..3], ["api", "graphql", "-f"]);
+        assert!(args[3].starts_with("query={\n"));
+        assert!(args[3].contains("author:octocat"));
+        assert!(args[3].contains("review-requested:octocat"));
     }
 }

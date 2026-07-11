@@ -12,6 +12,10 @@ pub struct GhCommand {
     timeout: Duration,
 }
 
+pub(crate) trait CommandRunner: Send + Sync {
+    fn run(&self, args: Vec<String>) -> Result<Output>;
+}
+
 impl GhCommand {
     pub fn new(timeout: Duration) -> Self {
         Self { timeout }
@@ -71,15 +75,11 @@ impl GhCommand {
             thread::sleep(Duration::from_millis(25));
         }
     }
+}
 
-    pub fn version(&self) -> Option<String> {
-        let output = self.run(["--version"]).ok()?;
-        if !output.status.success() {
-            return None;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        stdout.lines().next().map(str::trim).map(str::to_owned)
+impl CommandRunner for GhCommand {
+    fn run(&self, args: Vec<String>) -> Result<Output> {
+        GhCommand::run(self, args)
     }
 }
 
