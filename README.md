@@ -26,6 +26,8 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
   - PRs awaiting your review
 - Compact PR rows with review state, CI state, reviewers, and age
 - Dashboard fuzzy finder for quickly opening loaded PRs by repo, branch, title, author, reviewer, status, or section
+- Keyboard and mouse navigation across dashboard, search, detail, and theme controls
+- Runtime theme picker with dark and light presets and persistent selection
 - PR detail view with description, branch/state/mergeability metadata, and discussion
 - Unified discussion carousel for issue comments and review threads
 - Review-thread code context rendered next to comments
@@ -143,6 +145,7 @@ Searchable fields include repository, PR number, title, branch name, author, rev
 | `↓` / `ctrl-n` | Move down |
 | `↑` / `ctrl-p` | Move up |
 | `enter` | Open selected PR |
+| mouse click | Open clicked PR |
 | `esc` | Close search |
 
 ### PR detail
@@ -171,7 +174,7 @@ The mock data includes several repositories, paginated repository groups, PR rev
 ## Development
 
 ```sh
-cargo fmt -- --check
+cargo fmt --check
 cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 cargo run -- --mock
@@ -180,8 +183,8 @@ cargo run -- --mock
 Release builds are produced by GitHub Actions when a version tag is pushed:
 
 ```sh
-git tag v0.0.3
-git push origin v0.0.3
+git tag v0.0.5
+git push origin v0.0.5
 ```
 
 ## License
