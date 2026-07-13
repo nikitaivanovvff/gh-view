@@ -60,16 +60,7 @@ impl DashboardState {
         }
 
         let mut rows = Vec::new();
-        if config.separate_views {
-            self.push_section_rows(&mut rows, self.active_section, config.prs_per_repo_page);
-        } else {
-            self.push_section_rows(&mut rows, DashboardSection::MyPrs, config.prs_per_repo_page);
-            self.push_section_rows(
-                &mut rows,
-                DashboardSection::AwaitingReview,
-                config.prs_per_repo_page,
-            );
-        }
+        self.push_section_rows(&mut rows, self.active_section, config.prs_per_repo_page);
 
         if self.data.is_empty() {
             rows.push(Row::Message(
@@ -90,7 +81,7 @@ impl DashboardState {
             DashboardSection::MyPrs => &self.data.my_prs,
             DashboardSection::AwaitingReview => &self.data.awaiting_review,
         };
-        rows.push(Row::Section(section.title()));
+        rows.push(Row::Section);
         push_groups(
             rows,
             section,
@@ -111,7 +102,7 @@ impl DashboardState {
         status: &AppStatus,
         config: &DashboardConfig,
     ) -> bool {
-        if !config.separate_views || self.active_section == section {
+        if self.active_section == section {
             return false;
         }
 

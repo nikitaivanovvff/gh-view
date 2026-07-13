@@ -65,32 +65,25 @@ pub(super) fn render_dashboard(
     lines.push(rule_line(width));
     for (index, row) in rows.iter().enumerate() {
         match row {
-            Row::Section(title) => {
-                if app.config().dashboard.separate_views {
-                    let line = lines.len();
-                    let mut x = 0usize;
-                    for (label_index, section) in
-                        [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
-                            .into_iter()
-                            .enumerate()
-                    {
-                        let label = dashboard_view_label(app, section, label_index);
-                        targets.push((
-                            line,
-                            1,
-                            x,
-                            label.chars().count(),
-                            MouseTarget::DashboardSection(section),
-                        ));
-                        x += label.chars().count() + DASHBOARD_VIEW_GAP;
-                    }
-                    lines.extend(dashboard_view_lines(app, width));
-                } else {
-                    if *title == "Awaiting Review" {
-                        lines.push(Line::raw(""));
-                    }
-                    lines.extend(section_lines(title, section_count(&rows, index), width));
+            Row::Section => {
+                let line = lines.len();
+                let mut x = 0usize;
+                for (label_index, section) in
+                    [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
+                        .into_iter()
+                        .enumerate()
+                {
+                    let label = dashboard_view_label(app, section, label_index);
+                    targets.push((
+                        line,
+                        1,
+                        x,
+                        label.chars().count(),
+                        MouseTarget::DashboardSection(section),
+                    ));
+                    x += label.chars().count() + DASHBOARD_VIEW_GAP;
                 }
+                lines.extend(dashboard_view_lines(app, width));
             }
             Row::Group {
                 repo,
@@ -181,10 +174,7 @@ fn register_visible_target(
 }
 
 fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
-    let mut items = Vec::new();
-    if app.config().dashboard.separate_views {
-        items.push(FooterItem::new("tab", "switch view"));
-    }
+    let mut items = vec![FooterItem::new("tab", "switch view")];
     items.extend([
         FooterItem::new("j/k", "move"),
         FooterItem::new("enter", "details"),
@@ -212,21 +202,12 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             FooterItem::new("mock", format!("[{mode}]")),
             FooterItem::new("0", "ok"),
         ]);
-        if app.config().dashboard.separate_views {
-            items.extend([
-                FooterItem::new("5", "down"),
-                FooterItem::new("6", "timeout"),
-                FooterItem::new("7", "error"),
-                FooterItem::new("8", "auth"),
-            ]);
-        } else {
-            items.extend([
-                FooterItem::new("1", "down"),
-                FooterItem::new("2", "timeout"),
-                FooterItem::new("3", "error"),
-                FooterItem::new("4", "auth"),
-            ]);
-        }
+        items.extend([
+            FooterItem::new("5", "down"),
+            FooterItem::new("6", "timeout"),
+            FooterItem::new("7", "error"),
+            FooterItem::new("8", "auth"),
+        ]);
     }
     footer_lines(width, items)
 }
@@ -433,19 +414,6 @@ fn render_dashboard_loading(frame: &mut ratatui::Frame<'_>, loading_frame: usize
     );
 }
 
-pub(super) fn section_lines(title: &str, count: usize, width: usize) -> Vec<Line<'static>> {
-    vec![
-        Line::from(vec![
-            Span::styled(
-                format!("{} ", title.to_ascii_uppercase()),
-                theme::normal().add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(format!("({count})"), theme::muted()),
-        ]),
-        rule_line(width),
-    ]
-}
-
 fn dashboard_view_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let active = app.dashboard.active_section();
     let mut spans = Vec::new();
@@ -626,36 +594,18 @@ pub(super) fn message_line(selected: bool, message: &str) -> Line<'static> {
     ])
 }
 
-pub(super) fn section_count(rows: &[Row<'_>], section_index: usize) -> usize {
-    rows.iter()
-        .skip(section_index + 1)
-        .take_while(|row| !matches!(row, Row::Section(_)))
-        .filter_map(|row| match row {
-            Row::Group { count, .. } => Some(*count),
-            _ => None,
-        })
-        .sum()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::ReviewerState;
 
     #[test]
-    fn section_group_pr_and_message_lines_include_expected_text() {
+    fn group_pr_and_message_lines_include_expected_text() {
         let pr = pr();
-        let section = section_lines("My PRs", 3, 12)
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
         let group = group_line(true, "owner/repo", 2, true, 1, 1).to_string();
         let pr_line = pr_line(true, &pr, 80).to_string();
         let message = message_line(true, "No PRs").to_string();
 
-        assert!(section.contains("MY PRS"));
-        assert!(section.contains("(3)"));
         assert!(group.contains("repo"));
         assert!(group.contains("2 PRs"));
         assert!(pr_line.contains("#1 Title"));
@@ -731,35 +681,6 @@ mod tests {
         pr.updated_at = "1970-01-01T00:00:00Z".to_owned();
 
         assert!(pr_line(false, &pr, 80).to_string().contains('!'));
-    }
-
-    #[test]
-    fn section_count_sums_groups_until_next_section() {
-        let pr = pr();
-        let rows = vec![
-            Row::Section("My PRs"),
-            Row::Group {
-                section: crate::app::DashboardSection::MyPrs,
-                repo: "owner/a",
-                count: 2,
-                open: true,
-                page: 1,
-                page_count: 1,
-            },
-            Row::Pr(&pr),
-            Row::Section("Awaiting Review"),
-            Row::Group {
-                section: crate::app::DashboardSection::AwaitingReview,
-                repo: "owner/b",
-                count: 3,
-                open: true,
-                page: 1,
-                page_count: 1,
-            },
-        ];
-
-        assert_eq!(section_count(&rows, 0), 2);
-        assert_eq!(section_count(&rows, 3), 3);
     }
 
     fn pr() -> PullRequest {

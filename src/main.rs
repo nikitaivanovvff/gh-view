@@ -62,10 +62,6 @@ fn run_doctor(mock: bool, config: &config::Config) -> Result<()> {
         "dashboard PRs per repo page: {}",
         config.dashboard.prs_per_repo_page
     );
-    println!(
-        "separate dashboard views: {}",
-        config.dashboard.separate_views
-    );
 
     if mock {
         println!("Data source: built-in mock data");

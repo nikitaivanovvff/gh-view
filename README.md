@@ -102,10 +102,6 @@ theme = "default"
 # Number of PRs shown per expanded repository page.
 # Default: 3.
 prs_per_repo_page = 3
-
-# Show My PRs and Awaiting Review as separate full-page dashboard views.
-# Default: false.
-separate_views = false
 ```
 
 ## Keybindings
@@ -116,7 +112,7 @@ separate_views = false
 | --- | --- |
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
-| `1` / `2` / `tab` | Switch dashboard view when `separate_views` is enabled |
+| `1` / `2` / `tab` | Switch dashboard view |
 | `enter` | Open selected PR |
 | `/` | Search loaded PRs |
 | `t` | Open theme picker |
