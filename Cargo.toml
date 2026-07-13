@@ -22,3 +22,9 @@ webbrowser = "1.0"
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
+
+[profile.dev]
+incremental = false
+
+[profile.test]
+incremental = false
