@@ -32,6 +32,7 @@ pub struct App {
     pub detail: DetailState,
     pub loading_frame: usize,
     pub theme_picker: Option<ThemePickerState>,
+    mock_debug_open: bool,
     active_theme: usize,
     last_refresh_started_at: Option<Instant>,
     copy_notice: Option<CopyNotice>,
@@ -68,6 +69,7 @@ impl App {
             detail: DetailState::new(),
             loading_frame: 0,
             theme_picker: None,
+            mock_debug_open: false,
             active_theme,
             last_refresh_started_at: None,
             copy_notice: None,
@@ -209,6 +211,23 @@ impl App {
 
     pub fn theme_picker_is_open(&self) -> bool {
         self.theme_picker.is_some()
+    }
+
+    pub fn toggle_mock_debug(&mut self) -> bool {
+        if !self.client.is_mock() {
+            return false;
+        }
+        self.dashboard.close_search();
+        self.mock_debug_open = !self.mock_debug_open;
+        true
+    }
+
+    pub fn close_mock_debug(&mut self) {
+        self.mock_debug_open = false;
+    }
+
+    pub fn mock_debug_is_open(&self) -> bool {
+        self.mock_debug_open
     }
 
     pub fn active_theme_index(&self) -> usize {

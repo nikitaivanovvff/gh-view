@@ -1,6 +1,7 @@
 use super::dashboard::render_dashboard;
 use super::detail::render_detail;
 use super::layout::MouseLayout;
+use super::mock_debug::render_mock_debug;
 use super::theme;
 use super::theme_picker::render_theme_picker;
 use crate::app::{App, AppView};
@@ -21,6 +22,8 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
 
     if app.theme_picker_is_open() {
         render_theme_picker(frame, app, &mut mouse_layout);
+    } else if app.mock_debug_is_open() {
+        render_mock_debug(frame, app);
     }
 
     mouse_layout

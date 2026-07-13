@@ -200,13 +200,7 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         };
         items.extend([
             FooterItem::new("mock", format!("[{mode}]")),
-            FooterItem::new("0", "ok"),
-        ]);
-        items.extend([
-            FooterItem::new("5", "down"),
-            FooterItem::new("6", "timeout"),
-            FooterItem::new("7", "error"),
-            FooterItem::new("8", "auth"),
+            FooterItem::new("f1", "debug"),
         ]);
     }
     footer_lines(width, items)
@@ -597,7 +591,24 @@ pub(super) fn message_line(selected: bool, message: &str) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::github::MockGhClient;
     use crate::model::ReviewerState;
+
+    #[test]
+    fn mock_footer_links_to_debug_popup_without_listing_error_states() {
+        let app = App::with_default_config(Box::new(MockGhClient::new()));
+        let footer = dashboard_footer_lines(&app, 500)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(footer.contains("f1 debug"));
+        assert!(!footer.contains("5 down"));
+        assert!(!footer.contains("6 timeout"));
+        assert!(!footer.contains("7 error"));
+        assert!(!footer.contains("8 auth"));
+    }
 
     #[test]
     fn group_pr_and_message_lines_include_expected_text() {
