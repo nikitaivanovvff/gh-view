@@ -72,7 +72,8 @@ pub(super) fn push_groups<'a, F>(
     pages: &BTreeMap<String, usize>,
     page_size: usize,
     project: F,
-) where
+) -> bool
+where
     F: Fn(&PullRequest) -> Option<bool>,
 {
     let mut shown_group = false;
@@ -116,9 +117,7 @@ pub(super) fn push_groups<'a, F>(
         }
     }
 
-    if !shown_group {
-        rows.push(Row::Message("  none".to_owned()));
-    }
+    shown_group
 }
 
 pub(super) fn page_count(pr_count: usize, page_size: usize) -> usize {
@@ -152,10 +151,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn push_groups_adds_placeholder_for_empty_sections() {
+    fn push_groups_reports_empty_sections() {
         let mut rows = Vec::new();
 
-        push_groups(
+        let shown = push_groups(
             &mut rows,
             DashboardSection::MyPrs,
             &[],
@@ -165,7 +164,8 @@ mod tests {
             |_| Some(false),
         );
 
-        assert!(matches!(rows.as_slice(), [Row::Message(message)] if message == "  none"));
+        assert!(!shown);
+        assert!(rows.is_empty());
     }
 
     #[test]

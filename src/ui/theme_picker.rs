@@ -41,7 +41,10 @@ pub(super) fn render_theme_picker(
         let mut line = Line::from(vec![
             Span::styled(gutter, theme::accent().add_modifier(Modifier::BOLD)),
             Span::raw(" "),
-            Span::styled(format!("{:<name_width$}", option.name), name_style),
+            Span::styled(
+                format!("{:<name_width$}", truncate(option.name, name_width)),
+                name_style,
+            ),
             Span::raw("  "),
             Span::styled(
                 truncate(option.description, description_width),

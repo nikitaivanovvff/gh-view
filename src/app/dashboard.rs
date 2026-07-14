@@ -91,12 +91,6 @@ impl DashboardState {
         let mut rows = Vec::new();
         self.push_section_rows(&mut rows, self.active_section, config.prs_per_repo_page);
 
-        if self.data.is_empty() {
-            rows.push(Row::Message(
-                "No open PRs found. Press r to refresh.".to_owned(),
-            ));
-        }
-
         rows
     }
 
@@ -107,7 +101,7 @@ impl DashboardState {
         page_size: usize,
     ) {
         rows.push(Row::Section);
-        match section {
+        let shown = match section {
             DashboardSection::MyPrs => push_groups(
                 rows,
                 section,
@@ -131,8 +125,19 @@ impl DashboardState {
                             .matches(pr, login)
                             .then(|| pr.has_direct_review_request(login))
                     },
-                );
+                )
             }
+        };
+        if !shown {
+            let message = match section {
+                DashboardSection::MyPrs => "No PRs opened by you.",
+                DashboardSection::AwaitingReview => match self.review_scope {
+                    ReviewScope::All => "No PRs awaiting your review.",
+                    ReviewScope::Direct => "No direct review requests.",
+                    ReviewScope::Team => "No team review requests.",
+                },
+            };
+            rows.push(Row::Message(message.to_owned()));
         }
     }
 

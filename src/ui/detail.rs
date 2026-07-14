@@ -34,6 +34,7 @@ pub(super) fn render_detail(
             Paragraph::new(vec![super::dashboard::message_line(
                 false,
                 "No PR detail loaded. Press esc to go back.",
+                width,
             )])
             .style(theme::normal()),
             layout.description,
@@ -46,14 +47,20 @@ pub(super) fn render_detail(
     summary.push(Line::from(vec![
         Span::styled("GH-VIEW", theme::accent().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(format!("{} #{}", pr.repo, pr.number), theme::muted()),
+        Span::styled(
+            truncate(
+                &format!("{} #{}", pr.repo, pr.number),
+                width.saturating_sub(9),
+            ),
+            theme::muted(),
+        ),
     ]));
     summary.push(focus_rule_line(
         width,
         app.detail.active_pane == DetailPane::Description,
     ));
     summary.push(Line::from(vec![Span::styled(
-        pr.title.clone(),
+        truncate(&pr.title, width),
         theme::normal().add_modifier(Modifier::BOLD),
     )]));
     summary.push(metadata_line(app, detail));
@@ -96,12 +103,12 @@ pub(super) fn render_detail(
     let footer = footer_lines(
         width,
         vec![
-            FooterItem::new("j/k", format!("scroll {}", active_pane_label(app))),
-            FooterItem::new("tab", "switch focus"),
-            FooterItem::new("n/p", "discussion"),
             FooterItem::new("esc/q", "back"),
-            FooterItem::new("b", "open in browser"),
-            FooterItem::new("r", "refresh detail"),
+            FooterItem::new("j/k", format!("scroll {}", active_pane_label(app))),
+            FooterItem::new("tab", "focus"),
+            FooterItem::new("n/p", "discussion"),
+            FooterItem::new("b", "open PR"),
+            FooterItem::new("r", "refresh"),
         ],
     );
     frame.render_widget(Paragraph::new(footer), layout.footer);
@@ -398,7 +405,13 @@ fn code_context_lines(
         .unwrap_or_default();
     lines.push(Line::from(vec![
         Span::styled("  ", theme::muted()),
-        Span::styled(format!("{}{}", context.path, line_hint), theme::muted_key()),
+        Span::styled(
+            truncate(
+                &format!("{}{}", context.path, line_hint),
+                width.saturating_sub(2),
+            ),
+            theme::muted_key(),
+        ),
     ]));
 
     let visible_range = visible_code_line_range(context, height.saturating_sub(lines.len()));

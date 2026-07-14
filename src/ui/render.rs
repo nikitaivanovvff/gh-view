@@ -32,15 +32,34 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{DashboardSection, DetailPane, ReviewScope};
+    use crate::app::{DashboardSection, DetailPane, DetailStatus, ReviewScope};
     use crate::github::MockGhClient;
     use ratatui::{Terminal, backend::TestBackend, layout::Position};
+    use std::time::{Duration, Instant};
 
     fn draw_layout(app: &App, width: u16, height: u16) -> MouseLayout {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut layout = MouseLayout::default();
         terminal.draw(|frame| layout = render(frame, app)).unwrap();
         layout
+    }
+
+    fn draw_text(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, app);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -140,7 +159,66 @@ mod tests {
         );
 
         let narrow_layout = draw_layout(&app, 60, 30);
-        assert_eq!(narrow_layout.target_at(Position::new(59, 2)), None);
+        assert_eq!(
+            narrow_layout.target_at(Position::new(59, 2)),
+            Some(super::super::layout::MouseTarget::ReviewScope(
+                ReviewScope::All
+            ))
+        );
+        assert_eq!(narrow_layout.target_at(Position::new(52, 2)), None);
+    }
+
+    #[test]
+    fn narrow_dashboard_keeps_identity_ci_filter_and_essential_footer_controls() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+
+        let text = draw_text(&app, 60, 20);
+
+        assert!(text.contains("AWAITING REVIEW"));
+        assert!(text.contains("all [7]"));
+        assert!(text.contains("#"));
+        assert!(text.contains("ci"));
+        assert!(text.contains("q quit"));
+        assert!(text.contains("j/k move"));
+    }
+
+    #[test]
+    fn search_overlay_keeps_help_inside_a_standard_popup() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.open_search();
+
+        let text = draw_text(&app, 100, 20);
+
+        assert!(text.contains("Search PRs"));
+        assert!(text.contains("enter open"));
+        assert!(text.contains("esc close"));
+    }
+
+    #[test]
+    fn representative_detail_layout_keeps_identity_and_essential_controls() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.next();
+        app.next();
+        app.open_selected_detail();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            app.poll_background();
+            if app.detail.detail_status != DetailStatus::Loading {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let text = draw_text(&app, 80, 24);
+
+        assert!(text.contains("GH-VIEW"));
+        assert!(text.contains("#"));
+        assert!(text.contains("DESCRIPTION"));
+        assert!(text.contains("esc/q back"));
     }
 
     #[test]
