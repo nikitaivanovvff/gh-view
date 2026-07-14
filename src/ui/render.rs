@@ -1,6 +1,7 @@
 use super::dashboard::render_dashboard;
 use super::detail::render_detail;
 use super::layout::MouseLayout;
+use super::mock_debug::render_mock_debug;
 use super::theme;
 use super::theme_picker::render_theme_picker;
 use crate::app::{App, AppView};
@@ -21,6 +22,8 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
 
     if app.theme_picker_is_open() {
         render_theme_picker(frame, app, &mut mouse_layout);
+    } else if app.mock_debug_is_open() {
+        render_mock_debug(frame, app);
     }
 
     mouse_layout
@@ -30,7 +33,6 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
 mod tests {
     use super::*;
     use crate::app::{DashboardSection, DetailPane};
-    use crate::config::Config;
     use crate::github::MockGhClient;
     use ratatui::{Terminal, backend::TestBackend, layout::Position};
 
@@ -66,7 +68,12 @@ mod tests {
         let layout = draw_layout(&app, 100, 30);
 
         assert_eq!(layout.target_at(Position::new(4, 0)), None);
-        assert_eq!(layout.target_at(Position::new(4, 2)), None);
+        assert_eq!(
+            layout.target_at(Position::new(4, 2)),
+            Some(super::super::layout::MouseTarget::DashboardSection(
+                DashboardSection::MyPrs
+            ))
+        );
         assert_eq!(
             layout.target_at(Position::new(4, 4)),
             Some(super::super::layout::MouseTarget::DashboardRow(1))
@@ -96,10 +103,8 @@ mod tests {
     }
 
     #[test]
-    fn separate_dashboard_labels_use_exact_ranges() {
-        let mut config = Config::default();
-        config.dashboard.separate_views = true;
-        let mut app = App::new(Box::new(MockGhClient::new()), config);
+    fn dashboard_labels_use_exact_ranges() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
         let first_label_width = format!(
             "1 {} ({})",

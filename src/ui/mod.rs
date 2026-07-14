@@ -3,6 +3,7 @@ mod detail;
 mod footer;
 mod input;
 mod layout;
+mod mock_debug;
 mod palette;
 mod render;
 mod terminal;

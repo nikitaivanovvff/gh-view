@@ -60,6 +60,25 @@ pub(super) fn handle_event(
         return Ok(InputOutcome::Continue(changed));
     }
 
+    if app.mock_debug_is_open() {
+        let changed = match key.code {
+            KeyCode::F(1) | KeyCode::Esc | KeyCode::Char('q') => {
+                app.close_mock_debug();
+                true
+            }
+            KeyCode::Char(key) => {
+                let Some(mode) = mock_error_mode_for_key(key) else {
+                    return Ok(InputOutcome::Continue(false));
+                };
+                app.close_mock_debug();
+                app.set_mock_error_mode(mode);
+                true
+            }
+            _ => false,
+        };
+        return Ok(InputOutcome::Continue(changed));
+    }
+
     let changed = match app.view {
         AppView::Dashboard if app.search_is_open() => match key.code {
             KeyCode::Esc => {
@@ -100,13 +119,10 @@ pub(super) fn handle_event(
         },
         AppView::Dashboard => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(InputOutcome::Quit),
-            KeyCode::Char('1') if app.config().dashboard.separate_views => {
-                app.show_dashboard_section(DashboardSection::MyPrs)
-            }
-            KeyCode::Char('2') if app.config().dashboard.separate_views => {
-                app.show_dashboard_section(DashboardSection::AwaitingReview)
-            }
-            KeyCode::Tab if app.config().dashboard.separate_views => app.cycle_dashboard_section(),
+            KeyCode::F(1) => app.toggle_mock_debug(),
+            KeyCode::Char('1') => app.show_dashboard_section(DashboardSection::MyPrs),
+            KeyCode::Char('2') => app.show_dashboard_section(DashboardSection::AwaitingReview),
+            KeyCode::Tab => app.cycle_dashboard_section(),
             KeyCode::Char('/') => {
                 app.open_search();
                 true
@@ -137,16 +153,6 @@ pub(super) fn handle_event(
             }
             KeyCode::Char('r') => {
                 app.refresh_async();
-                true
-            }
-            KeyCode::Char(key)
-                if app.is_mock()
-                    && mock_error_mode_for_key(key, app.config().dashboard.separate_views)
-                        .is_some() =>
-            {
-                app.set_mock_error_mode(
-                    mock_error_mode_for_key(key, app.config().dashboard.separate_views).flatten(),
-                );
                 true
             }
             KeyCode::Char('b') => {
@@ -207,6 +213,9 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App, mouse_layout: &MouseLayout) ->
     let target = mouse_layout.target_at(Position::new(mouse.column, mouse.row));
     if app.theme_picker_is_open() {
         return handle_theme_picker_mouse(mouse, app, target);
+    }
+    if app.mock_debug_is_open() {
+        return false;
     }
 
     if app.search_is_open() {
@@ -320,28 +329,14 @@ fn handle_detail_mouse(mouse: MouseEvent, app: &mut App, target: Option<MouseTar
     }
 }
 
-fn mock_error_mode_for_key(
-    key: char,
-    separate_dashboard_views: bool,
-) -> Option<Option<MockErrorMode>> {
-    if separate_dashboard_views {
-        match key {
-            '0' => Some(None),
-            '5' => Some(Some(MockErrorMode::GitHubDown)),
-            '6' => Some(Some(MockErrorMode::Timeout)),
-            '7' => Some(Some(MockErrorMode::Generic)),
-            '8' => Some(Some(MockErrorMode::Auth)),
-            _ => None,
-        }
-    } else {
-        match key {
-            '0' => Some(None),
-            '1' => Some(Some(MockErrorMode::GitHubDown)),
-            '2' => Some(Some(MockErrorMode::Timeout)),
-            '3' => Some(Some(MockErrorMode::Generic)),
-            '4' => Some(Some(MockErrorMode::Auth)),
-            _ => None,
-        }
+fn mock_error_mode_for_key(key: char) -> Option<Option<MockErrorMode>> {
+    match key {
+        '0' => Some(None),
+        '5' => Some(Some(MockErrorMode::GitHubDown)),
+        '6' => Some(Some(MockErrorMode::Timeout)),
+        '7' => Some(Some(MockErrorMode::Generic)),
+        '8' => Some(Some(MockErrorMode::Auth)),
+        _ => None,
     }
 }
 
@@ -349,7 +344,6 @@ fn mock_error_mode_for_key(
 mod tests {
     use super::*;
     use crate::app::{DetailPane, DetailStatus};
-    use crate::config::Config;
     use crate::github::{GhStatus, MockErrorMode, MockGhClient, PullRequestSource};
     use crate::model::{PullRequest, PullRequestDetail};
     use crate::ui::render::render;
@@ -395,12 +389,6 @@ mod tests {
                 discussion: Vec::new(),
             })
         }
-    }
-
-    fn separate_views_config() -> Config {
-        let mut config = Config::default();
-        config.dashboard.separate_views = true;
-        config
     }
 
     #[test]
@@ -450,8 +438,8 @@ mod tests {
     }
 
     #[test]
-    fn separate_dashboard_view_keys_switch_sections() {
-        let mut app = App::new(Box::new(MockGhClient::new()), separate_views_config());
+    fn dashboard_view_keys_switch_sections() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
         assert_continue_changed(key(KeyCode::Char('2'), &mut app), true);
@@ -461,8 +449,10 @@ mod tests {
         );
         assert_eq!(app.mock_error_mode(), None);
 
+        assert_continue_changed(key(KeyCode::F(1), &mut app), true);
         assert_continue_changed(key(KeyCode::Char('5'), &mut app), true);
         assert_eq!(app.mock_error_mode(), Some(MockErrorMode::GitHubDown));
+        assert_continue_changed(key(KeyCode::F(1), &mut app), true);
         assert_continue_changed(key(KeyCode::Char('0'), &mut app), true);
         assert_eq!(app.mock_error_mode(), None);
 
@@ -478,7 +468,7 @@ mod tests {
 
     #[test]
     fn search_captures_dashboard_view_keys() {
-        let mut app = App::new(Box::new(MockGhClient::new()), separate_views_config());
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
         app.open_search();
 
@@ -498,7 +488,7 @@ mod tests {
         assert_eq!(app.dashboard.scroll, 1);
 
         assert_continue_changed(
-            mouse(MouseEventKind::Down(MouseButton::Left), 4, 4, &mut app),
+            mouse(MouseEventKind::Down(MouseButton::Left), 4, 5, &mut app),
             true,
         );
         assert!(matches!(
@@ -507,15 +497,15 @@ mod tests {
         ));
 
         assert_continue_changed(
-            mouse(MouseEventKind::Down(MouseButton::Left), 4, 4, &mut app),
+            mouse(MouseEventKind::Down(MouseButton::Left), 4, 5, &mut app),
             true,
         );
         assert_eq!(app.view, AppView::Detail);
     }
 
     #[test]
-    fn dashboard_tab_clicks_switch_separate_views() {
-        let mut app = App::new(Box::new(MockGhClient::new()), separate_views_config());
+    fn dashboard_tab_clicks_switch_views() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
         assert_continue_changed(
@@ -567,13 +557,19 @@ mod tests {
     fn mock_error_keys_are_mock_only() {
         let mut mock_app = App::with_default_config(Box::new(MockGhClient::new()));
 
-        assert_continue_changed(key(KeyCode::Char('1'), &mut mock_app), true);
+        assert_continue_changed(key(KeyCode::Char('5'), &mut mock_app), false);
+        assert_continue_changed(key(KeyCode::F(1), &mut mock_app), true);
+        assert!(mock_app.mock_debug_is_open());
+        assert_continue_changed(key(KeyCode::Char('5'), &mut mock_app), true);
         assert_eq!(mock_app.mock_error_mode(), Some(MockErrorMode::GitHubDown));
+        assert!(!mock_app.mock_debug_is_open());
+        assert_continue_changed(key(KeyCode::F(1), &mut mock_app), true);
         assert_continue_changed(key(KeyCode::Char('0'), &mut mock_app), true);
         assert_eq!(mock_app.mock_error_mode(), None);
 
         let mut live_like_app = App::with_default_config(Box::new(EmptySource));
-        assert_continue_changed(key(KeyCode::Char('1'), &mut live_like_app), false);
+        assert_continue_changed(key(KeyCode::F(1), &mut live_like_app), false);
+        assert!(!live_like_app.mock_debug_is_open());
         assert_eq!(live_like_app.mock_error_mode(), None);
     }
 
@@ -582,10 +578,22 @@ mod tests {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.dashboard.loading = true;
 
-        assert_continue_changed(key(KeyCode::Char('1'), &mut app), true);
+        assert_continue_changed(key(KeyCode::F(1), &mut app), true);
+        assert_continue_changed(key(KeyCode::Char('5'), &mut app), true);
 
         assert_eq!(app.mock_error_mode(), Some(MockErrorMode::GitHubDown));
         assert!(app.dashboard.loading);
+    }
+
+    #[test]
+    fn mock_debug_popup_closes_without_changing_mode() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+
+        assert_continue_changed(key(KeyCode::F(1), &mut app), true);
+        assert_continue_changed(key(KeyCode::Esc, &mut app), true);
+
+        assert!(!app.mock_debug_is_open());
+        assert_eq!(app.mock_error_mode(), None);
     }
 
     #[test]

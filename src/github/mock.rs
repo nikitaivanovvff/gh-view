@@ -280,7 +280,7 @@ impl PullRequestSource for MockGhClient {
             mergeable: Some("MERGEABLE".to_owned()),
             head_ref: "phase-2-detail".to_owned(),
             base_ref: "main".to_owned(),
-            discussion: mock_discussion(pr),
+            discussion: mock_issue_comments(pr),
             reviews: vec![PrReview {
                 author: "bob".to_owned(),
                 state: "COMMENTED".to_owned(),
@@ -288,6 +288,11 @@ impl PullRequestSource for MockGhClient {
                 submitted_at: "2026-06-30T11:30:00Z".to_owned(),
             }],
         })
+    }
+
+    fn fetch_pr_discussion(&self, pr: &PullRequest) -> Result<Vec<DiscussionItem>> {
+        self.maybe_fail()?;
+        Ok(mock_review_threads(pr))
     }
 }
 
@@ -304,47 +309,52 @@ struct MockPr<'a> {
     reviewers: Vec<&'a str>,
 }
 
-fn mock_discussion(pr: &PullRequest) -> Vec<DiscussionItem> {
-    vec![
-        DiscussionItem {
-            kind: DiscussionKind::ReviewThread { resolved: false },
-            author: "alice".to_owned(),
-            body: "This is the area I was talking about: the comments pane has a lot of unused horizontal space. Could we show the code context next to the thread instead?".to_owned(),
-            created_at: "2026-06-30T11:00:00Z".to_owned(),
-            url: format!("{}#discussion_r1", pr.url),
-            replies: vec![DiscussionReply {
-                author: "nikita".to_owned(),
-                body: "Agreed. I normalized comments and review threads into one carousel and added an optional code pane.".to_owned(),
-                created_at: "2026-06-30T11:20:00Z".to_owned(),
-            }],
-            code_context: Some(CodeContext {
-                path: "src/ui/mod.rs".to_owned(),
-                start_line: Some(138),
-                highlighted_line: Some(146),
-                highlighted_kind: None,
-                lines: vec![
-                    code_line(138, CodeLineKind::Context, "lines.push(Line::styled(\"COMMENTS\", theme::muted()));"),
-                    code_line(139, CodeLineKind::Context, "if detail.comments.is_empty() {"),
-                    code_line(140, CodeLineKind::Context, "    lines.push(Line::styled(\"  none\", theme::muted()));"),
-                    code_line(141, CodeLineKind::Context, "} else {"),
-                    code_line(142, CodeLineKind::Removed, "    for comment in &detail.comments {"),
-                    code_line(143, CodeLineKind::Removed, "        push_wrapped(&mut lines, &comment.body, width, \"    \", theme::normal());"),
-                    code_line(144, CodeLineKind::Added, "    let item = selected_discussion(detail, app.discussion_selected);"),
-                    code_line(145, CodeLineKind::Added, "    render_discussion_panes(frame, chunks[1], item);"),
-                    code_line(146, CodeLineKind::Context, "}"),
-                ],
-            }),
-        },
-        DiscussionItem {
-            kind: DiscussionKind::IssueComment,
-            author: "carol".to_owned(),
-            body: "General question: should issue comments without line context still appear in the same carousel? I think yes, with an empty code pane.".to_owned(),
-            created_at: "2026-06-30T11:45:00Z".to_owned(),
-            url: format!("{}#issuecomment-3", pr.url),
-            replies: Vec::new(),
-            code_context: None,
-        },
-    ]
+fn mock_review_threads(pr: &PullRequest) -> Vec<DiscussionItem> {
+    if pr.repo != "earendil/gh-view" || pr.number != 43 {
+        return Vec::new();
+    }
+
+    vec![DiscussionItem {
+        kind: DiscussionKind::ReviewThread { resolved: false },
+        author: "alice".to_owned(),
+        body: "This is the area I was talking about: the comments pane has a lot of unused horizontal space. Could we show the code context next to the thread instead?".to_owned(),
+        created_at: "2026-06-30T11:00:00Z".to_owned(),
+        url: format!("{}#discussion_r1", pr.url),
+        replies: vec![DiscussionReply {
+            author: "nikita".to_owned(),
+            body: "Agreed. I normalized comments and review threads into one carousel and added an optional code pane.".to_owned(),
+            created_at: "2026-06-30T11:20:00Z".to_owned(),
+        }],
+        code_context: Some(CodeContext {
+            path: "src/ui/mod.rs".to_owned(),
+            start_line: Some(138),
+            highlighted_line: Some(146),
+            highlighted_kind: None,
+            lines: vec![
+                code_line(138, CodeLineKind::Context, "lines.push(Line::styled(\"COMMENTS\", theme::muted()));"),
+                code_line(139, CodeLineKind::Context, "if detail.comments.is_empty() {"),
+                code_line(140, CodeLineKind::Context, "    lines.push(Line::styled(\"  none\", theme::muted()));"),
+                code_line(141, CodeLineKind::Context, "} else {"),
+                code_line(142, CodeLineKind::Removed, "    for comment in &detail.comments {"),
+                code_line(143, CodeLineKind::Removed, "        push_wrapped(&mut lines, &comment.body, width, \"    \", theme::normal());"),
+                code_line(144, CodeLineKind::Added, "    let item = selected_discussion(detail, app.discussion_selected);"),
+                code_line(145, CodeLineKind::Added, "    render_discussion_panes(frame, chunks[1], item);"),
+                code_line(146, CodeLineKind::Context, "}"),
+            ],
+        }),
+    }]
+}
+
+fn mock_issue_comments(pr: &PullRequest) -> Vec<DiscussionItem> {
+    vec![DiscussionItem {
+        kind: DiscussionKind::IssueComment,
+        author: "carol".to_owned(),
+        body: "General question: should issue comments without line context still appear in the same carousel? I think yes, with an empty code pane.".to_owned(),
+        created_at: "2026-06-30T11:45:00Z".to_owned(),
+        url: format!("{}#issuecomment-3", pr.url),
+        replies: Vec::new(),
+        code_context: None,
+    }]
 }
 
 fn code_line(number: u64, kind: CodeLineKind, text: &str) -> CodeContextLine {
@@ -386,5 +396,24 @@ fn mock_pr(input: MockPr<'_>) -> PullRequest {
             })
             .collect(),
         review_requested: input.reviewers.into_iter().map(str::to_owned).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detail_route_pr_has_review_thread_code_context() {
+        let client = MockGhClient::new();
+        let prs = client.fetch_my_prs("nikita").unwrap();
+        let detail_pr = prs.iter().find(|pr| pr.number == 43).unwrap();
+        let other_pr = prs.iter().find(|pr| pr.number == 42).unwrap();
+
+        let discussion = client.fetch_pr_discussion(detail_pr).unwrap();
+
+        assert_eq!(discussion.len(), 1);
+        assert!(discussion[0].code_context.is_some());
+        assert!(client.fetch_pr_discussion(other_pr).unwrap().is_empty());
     }
 }

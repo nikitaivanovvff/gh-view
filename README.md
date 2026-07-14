@@ -10,18 +10,22 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
 
 ## Screenshots
 
-### Dashboard
+### My PRs
 
-![gh-view dashboard mock mode](docs/assets/dashboard-mock.png)
+![gh-view My PRs dashboard](docs/assets/my_prs_example.png)
+
+### Awaiting Review
+
+![gh-view Awaiting Review dashboard](docs/assets/awaiting_review_example.png)
 
 ### PR Detail
 
-![gh-view PR detail mock mode](docs/assets/details-mock.png)
+![gh-view PR detail with discussion and code context](docs/assets/pr_details_example.png)
 
 ## Features
 
 - Dashboard grouped by repository
-- Dashboard sections, optionally shown as separate full-page views, for:
+- Separate full-page dashboard views for:
   - PRs opened by you
   - PRs awaiting your review
 - Compact PR rows with review state, CI state, reviewers, and age
@@ -102,10 +106,6 @@ theme = "default"
 # Number of PRs shown per expanded repository page.
 # Default: 3.
 prs_per_repo_page = 3
-
-# Show My PRs and Awaiting Review as separate full-page dashboard views.
-# Default: false.
-separate_views = false
 ```
 
 ## Keybindings
@@ -116,7 +116,7 @@ separate_views = false
 | --- | --- |
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
-| `1` / `2` / `tab` | Switch dashboard view when `separate_views` is enabled |
+| `1` / `2` / `tab` | Switch dashboard view |
 | `enter` | Open selected PR |
 | `/` | Search loaded PRs |
 | `t` | Open theme picker |

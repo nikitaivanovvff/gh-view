@@ -32,6 +32,7 @@ pub struct App {
     pub detail: DetailState,
     pub loading_frame: usize,
     pub theme_picker: Option<ThemePickerState>,
+    mock_debug_open: bool,
     active_theme: usize,
     last_refresh_started_at: Option<Instant>,
     copy_notice: Option<CopyNotice>,
@@ -68,6 +69,7 @@ impl App {
             detail: DetailState::new(),
             loading_frame: 0,
             theme_picker: None,
+            mock_debug_open: false,
             active_theme,
             last_refresh_started_at: None,
             copy_notice: None,
@@ -209,6 +211,23 @@ impl App {
 
     pub fn theme_picker_is_open(&self) -> bool {
         self.theme_picker.is_some()
+    }
+
+    pub fn toggle_mock_debug(&mut self) -> bool {
+        if !self.client.is_mock() {
+            return false;
+        }
+        self.dashboard.close_search();
+        self.mock_debug_open = !self.mock_debug_open;
+        true
+    }
+
+    pub fn close_mock_debug(&mut self) {
+        self.mock_debug_open = false;
+    }
+
+    pub fn mock_debug_is_open(&self) -> bool {
+        self.mock_debug_open
     }
 
     pub fn active_theme_index(&self) -> usize {
@@ -651,12 +670,6 @@ mod tests {
         }
     }
 
-    fn separate_views_config() -> Config {
-        let mut config = Config::default();
-        config.dashboard.separate_views = true;
-        config
-    }
-
     impl PullRequestSource for TestSource {
         fn clone_box(&self) -> Box<dyn PullRequestSource> {
             Box::new(self.clone())
@@ -712,9 +725,9 @@ mod tests {
                 .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
         );
         assert!(
-            app.rows()
-                .iter()
-                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+            app.dashboard
+                .section_pr_count(DashboardSection::AwaitingReview)
+                == 1
         );
     }
 
@@ -750,9 +763,9 @@ mod tests {
         assert_eq!(app.search_query(), Some("1"));
         assert!(app.dashboard_error_page().is_none());
         assert!(
-            app.rows()
-                .iter()
-                .any(|row| matches!(row, Row::Pr(pr) if pr.number == 2))
+            app.dashboard
+                .section_pr_count(DashboardSection::AwaitingReview)
+                == 1
         );
         assert!(
             !app.rows()
@@ -762,12 +775,12 @@ mod tests {
     }
 
     #[test]
-    fn separate_dashboard_views_show_only_the_active_section() {
-        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+    fn dashboard_views_show_only_the_active_section() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
 
         assert_eq!(app.dashboard.active_section(), DashboardSection::MyPrs);
-        assert!(matches!(app.rows().first(), Some(Row::Section("My PRs"))));
+        assert!(matches!(app.rows().first(), Some(Row::Section)));
         assert!(
             app.rows()
                 .iter()
@@ -780,10 +793,7 @@ mod tests {
         );
 
         assert!(app.show_dashboard_section(DashboardSection::AwaitingReview));
-        assert!(matches!(
-            app.rows().first(),
-            Some(Row::Section("Awaiting Review"))
-        ));
+        assert!(matches!(app.rows().first(), Some(Row::Section)));
         assert!(
             app.rows()
                 .iter()
@@ -797,8 +807,8 @@ mod tests {
     }
 
     #[test]
-    fn separate_dashboard_views_preserve_selection_and_scroll() {
-        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+    fn dashboard_views_preserve_selection_and_scroll() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.next();
         app.scroll_dashboard_down();
@@ -816,24 +826,6 @@ mod tests {
         app.show_dashboard_section(DashboardSection::AwaitingReview);
         assert_eq!(app.dashboard.selected, 1);
         assert_eq!(app.dashboard.scroll, 1);
-    }
-
-    #[test]
-    fn stacked_dashboard_ignores_section_switches() {
-        let mut app = App::with_default_config(Box::new(TestSource::ok()));
-        app.refresh();
-
-        assert!(!app.show_dashboard_section(DashboardSection::AwaitingReview));
-        assert!(
-            app.rows()
-                .iter()
-                .any(|row| matches!(row, Row::Section("My PRs")))
-        );
-        assert!(
-            app.rows()
-                .iter()
-                .any(|row| matches!(row, Row::Section("Awaiting Review")))
-        );
     }
 
     #[test]
@@ -1013,13 +1005,22 @@ mod tests {
                 ..
             })
         ));
+
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+        let rows = app.rows();
         assert!(matches!(
-            rows.get(3),
+            rows.get(1),
             Some(Row::Group {
                 repo: "owner/shared",
                 open: true,
                 ..
             })
+        ));
+
+        app.show_dashboard_section(DashboardSection::MyPrs);
+        assert!(matches!(
+            app.rows().get(1),
+            Some(Row::Group { open: false, .. })
         ));
     }
 
@@ -1135,8 +1136,8 @@ mod tests {
     }
 
     #[test]
-    fn opening_search_match_activates_its_separate_dashboard_section() {
-        let mut app = App::new(Box::new(TestSource::ok()), separate_views_config());
+    fn opening_search_match_activates_its_dashboard_section() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
         app.open_search();
         app.push_search_char('2');
