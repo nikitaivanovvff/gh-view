@@ -123,6 +123,7 @@ pub(super) fn handle_event(
             KeyCode::Char('1') => app.show_dashboard_section(DashboardSection::MyPrs),
             KeyCode::Char('2') => app.show_dashboard_section(DashboardSection::AwaitingReview),
             KeyCode::Tab => app.cycle_dashboard_section(),
+            KeyCode::Char('f') => app.cycle_review_scope(),
             KeyCode::Char('/') => {
                 app.open_search();
                 true
@@ -283,6 +284,9 @@ fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App, target: Option<Mouse
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(MouseTarget::DashboardSection(section)) = target {
                 return app.show_dashboard_section(section);
+            }
+            if let Some(MouseTarget::ReviewScope(scope)) = target {
+                return app.set_review_scope(scope);
             }
 
             let rows = app.rows();
@@ -464,6 +468,12 @@ mod tests {
             app.dashboard.active_section(),
             DashboardSection::AwaitingReview
         );
+
+        assert_continue_changed(key(KeyCode::Char('f'), &mut app), true);
+        assert_eq!(
+            app.dashboard.review_scope(),
+            crate::app::ReviewScope::Direct
+        );
     }
 
     #[test]
@@ -526,6 +536,22 @@ mod tests {
         assert_continue_changed(
             mouse(MouseEventKind::Down(MouseButton::Left), 2, 2, &mut app),
             false,
+        );
+    }
+
+    #[test]
+    fn dashboard_review_filters_are_clickable() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+
+        assert_continue_changed(
+            mouse(MouseEventKind::Down(MouseButton::Left), 83, 2, &mut app),
+            true,
+        );
+        assert_eq!(
+            app.dashboard.review_scope(),
+            crate::app::ReviewScope::Direct
         );
     }
 

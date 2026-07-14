@@ -32,7 +32,7 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{DashboardSection, DetailPane};
+    use crate::app::{DashboardSection, DetailPane, ReviewScope};
     use crate::github::MockGhClient;
     use ratatui::{Terminal, backend::TestBackend, layout::Position};
 
@@ -107,7 +107,7 @@ mod tests {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
         let first_label_width = format!(
-            "1 {} ({})",
+            "1 {} [{}]",
             DashboardSection::MyPrs.title().to_ascii_uppercase(),
             app.dashboard.section_pr_count(DashboardSection::MyPrs)
         )
@@ -129,6 +129,18 @@ mod tests {
                 DashboardSection::AwaitingReview
             ))
         );
+
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+        let layout = draw_layout(&app, 100, 30);
+        assert_eq!(
+            layout.target_at(Position::new(75, 2)),
+            Some(super::super::layout::MouseTarget::ReviewScope(
+                ReviewScope::All
+            ))
+        );
+
+        let narrow_layout = draw_layout(&app, 60, 30);
+        assert_eq!(narrow_layout.target_at(Position::new(59, 2)), None);
     }
 
     #[test]

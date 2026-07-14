@@ -5,7 +5,8 @@ use super::text::{
 };
 use super::theme;
 use crate::app::{
-    App, DashboardErrorLine, DashboardErrorPage, DashboardSearchMatch, DashboardSection, Row,
+    App, DashboardErrorLine, DashboardErrorPage, DashboardSearchMatch, DashboardSection,
+    ReviewScope, Row,
 };
 use crate::model::PullRequest;
 use crate::ui::footer::{FooterItem, footer_lines};
@@ -16,6 +17,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 const DASHBOARD_VIEW_GAP: usize = 4;
+const REVIEW_SCOPE_GAP: usize = 3;
 
 pub(super) fn render_dashboard(
     frame: &mut ratatui::Frame<'_>,
@@ -82,6 +84,17 @@ pub(super) fn render_dashboard(
                         MouseTarget::DashboardSection(section),
                     ));
                     x += label.chars().count() + DASHBOARD_VIEW_GAP;
+                }
+                if app.dashboard.active_section() == DashboardSection::AwaitingReview {
+                    for (scope, label, x) in review_scope_placements(app, width) {
+                        targets.push((
+                            line,
+                            1,
+                            x,
+                            label.chars().count(),
+                            MouseTarget::ReviewScope(scope),
+                        ));
+                    }
                 }
                 lines.extend(dashboard_view_lines(app, width));
             }
@@ -175,6 +188,9 @@ fn register_visible_target(
 
 fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let mut items = vec![FooterItem::new("tab", "switch view")];
+    if app.dashboard.active_section() == DashboardSection::AwaitingReview {
+        items.push(FooterItem::new("f", "review filter"));
+    }
     items.extend([
         FooterItem::new("j/k", "move"),
         FooterItem::new("enter", "details"),
@@ -429,12 +445,61 @@ fn dashboard_view_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ));
     }
 
+    if active == DashboardSection::AwaitingReview {
+        let mut rendered_width = dashboard_views_width(app);
+        for (scope, label, x) in review_scope_placements(app, width) {
+            spans.push(Span::raw(" ".repeat(x.saturating_sub(rendered_width))));
+            let style = if scope == app.dashboard.review_scope() {
+                theme::muted().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                theme::muted()
+            };
+            rendered_width = x + label.chars().count();
+            spans.push(Span::styled(label, style));
+        }
+    }
     vec![Line::from(spans), rule_line(width)]
+}
+
+fn review_scope_placements(app: &App, width: usize) -> Vec<(ReviewScope, String, usize)> {
+    let (all, direct, team) = app.dashboard.review_scope_counts();
+    let labels = [
+        (ReviewScope::All, format!("all [{all}]")),
+        (ReviewScope::Direct, format!("direct [{direct}]")),
+        (ReviewScope::Team, format!("team [{team}]")),
+    ];
+    let scopes_width = labels
+        .iter()
+        .map(|(_, label)| label.chars().count())
+        .sum::<usize>()
+        + REVIEW_SCOPE_GAP * labels.len().saturating_sub(1);
+    if dashboard_views_width(app) + DASHBOARD_VIEW_GAP + scopes_width > width {
+        return Vec::new();
+    }
+
+    let mut x = width - scopes_width;
+    labels
+        .into_iter()
+        .map(|(scope, label)| {
+            let placement = (scope, label.clone(), x);
+            x += label.chars().count() + REVIEW_SCOPE_GAP;
+            placement
+        })
+        .collect()
+}
+
+fn dashboard_views_width(app: &App) -> usize {
+    [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
+        .into_iter()
+        .enumerate()
+        .map(|(index, section)| dashboard_view_label(app, section, index).chars().count())
+        .sum::<usize>()
+        + DASHBOARD_VIEW_GAP
 }
 
 fn dashboard_view_label(app: &App, section: DashboardSection, index: usize) -> String {
     format!(
-        "{} {} ({})",
+        "{} {} [{}]",
         index + 1,
         section.title().to_ascii_uppercase(),
         app.dashboard.section_pr_count(section)
@@ -467,7 +532,7 @@ pub(super) fn group_line(
             repo_display_name(repo),
             theme::normal().add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("   {count} {pr_label}"), theme::muted()),
+        Span::styled(format!("   [{count} {pr_label}]"), theme::muted()),
         Span::styled(page_label, theme::accent()),
     ])
 }
@@ -557,7 +622,12 @@ pub(super) fn branch_line(selected: bool, pr: &PullRequest, nerd_fonts: bool) ->
 
 pub(super) fn reviewers_line(selected: bool, pr: &PullRequest) -> Line<'static> {
     let gutter = if selected { "│" } else { " " };
-    if pr.reviewers.is_empty() {
+    let completed_reviewers: Vec<_> = pr
+        .reviewers
+        .iter()
+        .filter(|reviewer| reviewer.state != crate::model::ReviewerState::Requested)
+        .collect();
+    if pr.review_requested.is_empty() && completed_reviewers.is_empty() {
         return Line::from(vec![
             Span::styled(gutter, selected_style()),
             Span::raw("       "),
@@ -566,7 +636,26 @@ pub(super) fn reviewers_line(selected: bool, pr: &PullRequest) -> Line<'static> 
     }
 
     let mut spans = vec![Span::styled(gutter, selected_style()), Span::raw("       ")];
-    for (index, reviewer) in pr.reviewers.iter().enumerate() {
+    if !pr.review_requested.is_empty() {
+        spans.push(Span::styled("requested: ", theme::muted()));
+        for (index, target) in pr.review_requested.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::raw(", "));
+            }
+            let label = match target {
+                crate::model::ReviewRequestTarget::User(login) => format!("@{login}"),
+                crate::model::ReviewRequestTarget::Team(team) if team.is_empty() => {
+                    "your team".to_owned()
+                }
+                crate::model::ReviewRequestTarget::Team(team) => format!("@{team}"),
+            };
+            spans.push(Span::styled(label, theme::reviewer()));
+        }
+    }
+    for (index, reviewer) in completed_reviewers.iter().enumerate() {
+        if index == 0 && !pr.review_requested.is_empty() {
+            spans.push(Span::raw("  "));
+        }
         if index > 0 {
             spans.push(Span::raw("  "));
         }
@@ -664,25 +753,26 @@ mod tests {
                 state: ReviewerState::Requested,
             },
         ];
+        pr.review_requested = vec![crate::model::ReviewRequestTarget::User("carol".to_owned())];
 
         let line = reviewers_line(false, &pr).to_string();
 
         assert!(line.contains("@alice"));
         assert!(line.contains("@bob"));
         assert!(line.contains("@carol"));
+        assert!(!line.contains("you"));
     }
 
     #[test]
     fn reviewer_line_shows_requested_team() {
         let mut pr = pr();
-        pr.reviewers = vec![crate::model::Reviewer {
-            login: "core-team".to_owned(),
-            state: ReviewerState::Requested,
-        }];
+        pr.review_requested = vec![crate::model::ReviewRequestTarget::Team(
+            "owner/core-team".to_owned(),
+        )];
 
         let line = reviewers_line(false, &pr).to_string();
 
-        assert!(line.contains("@core-team"));
+        assert!(line.contains("@owner/core-team"));
         assert!(!line.contains("no reviewers"));
     }
 

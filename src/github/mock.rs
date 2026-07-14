@@ -3,7 +3,8 @@ use super::DEFAULT_GH_COMMAND_TIMEOUT_SECONDS;
 use super::{GhError, GhStatus, MockErrorMode, PullRequestSource};
 use crate::model::{
     CheckStatus, CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind,
-    DiscussionReply, PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
+    DiscussionReply, PrReview, PullRequest, PullRequestDetail, ReviewRequestTarget, Reviewer,
+    ReviewerState,
 };
 use anyhow::{Result, bail};
 use std::sync::{Arc, Mutex};
@@ -183,7 +184,7 @@ impl PullRequestSource for MockGhClient {
 
     fn fetch_review_requests(&self, _login: &str) -> Result<Vec<PullRequest>> {
         self.maybe_fail()?;
-        Ok(vec![
+        let mut prs = vec![
             mock_pr(MockPr {
                 repo: "earendil/overseer",
                 number: 4,
@@ -268,7 +269,14 @@ impl PullRequestSource for MockGhClient {
                 check_status: None,
                 reviewers: vec![],
             }),
-        ])
+        ];
+        prs[5]
+            .review_requested
+            .push(ReviewRequestTarget::Team("earendil/maintainers".to_owned()));
+        prs[6].review_requested = vec![ReviewRequestTarget::Team(
+            "acme/widget-reviewers".to_owned(),
+        )];
+        Ok(prs)
     }
 
     fn fetch_pr_detail(&self, pr: &PullRequest) -> Result<PullRequestDetail> {
@@ -395,7 +403,11 @@ fn mock_pr(input: MockPr<'_>) -> PullRequest {
                 state: reviewer_state(input.review_decision, login),
             })
             .collect(),
-        review_requested: input.reviewers.into_iter().map(str::to_owned).collect(),
+        review_requested: input
+            .reviewers
+            .into_iter()
+            .map(|login| ReviewRequestTarget::User(login.to_owned()))
+            .collect(),
     }
 }
 
