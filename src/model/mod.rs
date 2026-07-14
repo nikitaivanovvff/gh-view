@@ -7,5 +7,6 @@ pub use discussion::{
     CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind, DiscussionReply,
 };
 pub use pull_request::{
-    CheckStatus, PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
+    CheckStatus, PrReview, PullRequest, PullRequestDetail, ReviewRequestTarget, Reviewer,
+    ReviewerState,
 };

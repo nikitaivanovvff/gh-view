@@ -1,6 +1,7 @@
 use crate::model::{
     CheckStatus, CodeContext, CodeContextLine, CodeLineKind, DiscussionItem, DiscussionKind,
-    DiscussionReply, PrReview, PullRequest, PullRequestDetail, Reviewer, ReviewerState,
+    DiscussionReply, PrReview, PullRequest, PullRequestDetail, ReviewRequestTarget, Reviewer,
+    ReviewerState,
 };
 use serde::Deserialize;
 
@@ -170,8 +171,17 @@ struct DashboardActor {
     login: String,
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    slug: String,
+    organization: Option<DashboardOrganization>,
     #[serde(default, rename = "__typename")]
     typename: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DashboardOrganization {
+    #[serde(default)]
+    login: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -315,23 +325,19 @@ impl DashboardSearchResponse {
 }
 
 impl DashboardResponse {
-    pub(super) fn into_page(self, login: &str) -> (PullRequestPage, PullRequestPage) {
+    pub(super) fn into_page(self) -> (PullRequestPage, PullRequestPage) {
         let my_prs = self
             .data
             .my_prs
             .map(DashboardSearchConnection::into_page)
             .unwrap_or_default();
-        let (reviews, review_cursor) = self
+        let reviews = self
             .data
             .review_requests
             .map(DashboardSearchConnection::into_page)
             .unwrap_or_default();
-        let reviews = reviews
-            .into_iter()
-            .filter(|pr| pr.review_requested.iter().any(|reviewer| reviewer == login))
-            .collect();
 
-        (my_prs, (reviews, review_cursor))
+        (my_prs, reviews)
     }
 }
 
@@ -353,17 +359,7 @@ impl DashboardSearchConnection {
 
 impl DashboardSearchPullRequest {
     fn into_pull_request(self) -> PullRequest {
-        let mut reviewers: Vec<Reviewer> = self
-            .review_requests
-            .nodes
-            .iter()
-            .filter_map(|request| request.requested_reviewer.as_ref())
-            .filter_map(DashboardActor::reviewer_name)
-            .map(|login| Reviewer {
-                login,
-                state: ReviewerState::Requested,
-            })
-            .collect();
+        let mut reviewers = Vec::new();
 
         for review in self.reviews.nodes {
             let Some(actor) = review.author else {
@@ -383,14 +379,15 @@ impl DashboardSearchPullRequest {
         reviewers.sort_by(|left, right| left.login.cmp(&right.login));
         reviewers.dedup_by(|left, right| left.login == right.login);
 
-        let review_requested = self
+        let mut review_requested: Vec<_> = self
             .review_requests
             .nodes
             .into_iter()
             .filter_map(|request| request.requested_reviewer)
-            .filter(|actor| actor.typename == "User" && !actor.login.is_empty())
-            .map(|actor| actor.login)
+            .filter_map(DashboardActor::into_review_request_target)
             .collect();
+        review_requested.sort();
+        review_requested.dedup();
 
         PullRequest {
             repo: self.repository.name_with_owner,
@@ -416,12 +413,30 @@ impl DashboardSearchPullRequest {
 }
 
 impl DashboardActor {
-    fn reviewer_name(&self) -> Option<String> {
+    fn into_review_request_target(self) -> Option<ReviewRequestTarget> {
         match self.typename.as_str() {
-            "User" if !self.login.is_empty() => Some(self.login.clone()),
-            "Team" if !self.name.is_empty() => Some(self.name.clone()),
+            "User" if !self.login.is_empty() => Some(ReviewRequestTarget::User(self.login)),
+            "Team" => self.team_name().map(ReviewRequestTarget::Team),
             _ => None,
         }
+    }
+
+    fn team_name(&self) -> Option<String> {
+        let team = if self.slug.is_empty() {
+            self.name.as_str()
+        } else {
+            self.slug.as_str()
+        };
+        if team.is_empty() {
+            return None;
+        }
+
+        Some(
+            match self.organization.as_ref().map(|org| org.login.as_str()) {
+                Some(org) if !org.is_empty() => format!("{org}/{team}"),
+                _ => team.to_owned(),
+            },
+        )
     }
 }
 
@@ -768,7 +783,12 @@ mod tests {
                           "requestedReviewer": { "login": "alice", "__typename": "User" }
                         },
                         {
-                          "requestedReviewer": { "name": "platform", "__typename": "Team" }
+                          "requestedReviewer": {
+                            "name": "Platform",
+                            "slug": "platform",
+                            "organization": { "login": "owner" },
+                            "__typename": "Team"
+                          }
                         }
                       ]
                     },
@@ -795,23 +815,19 @@ mod tests {
         assert_eq!(pr.head_ref, "feature/add");
         assert_eq!(pr.review_decision.as_deref(), Some("REVIEW_REQUIRED"));
         assert_eq!(pr.check_status, Some(CheckStatus::Passing));
-        assert_eq!(pr.review_requested, vec!["alice".to_owned()]);
+        assert_eq!(
+            pr.review_requested,
+            vec![
+                ReviewRequestTarget::User("alice".to_owned()),
+                ReviewRequestTarget::Team("owner/platform".to_owned()),
+            ]
+        );
         assert_eq!(
             pr.reviewers,
-            vec![
-                Reviewer {
-                    login: "alice".to_owned(),
-                    state: ReviewerState::Requested,
-                },
-                Reviewer {
-                    login: "bob".to_owned(),
-                    state: ReviewerState::Approved,
-                },
-                Reviewer {
-                    login: "platform".to_owned(),
-                    state: ReviewerState::Requested,
-                }
-            ]
+            vec![Reviewer {
+                login: "bob".to_owned(),
+                state: ReviewerState::Approved,
+            }]
         );
     }
 
@@ -883,18 +899,24 @@ mod tests {
         )
         .unwrap();
 
-        let ((my_prs, my_cursor), (reviews, review_cursor)) = response.into_page("octocat");
+        let ((my_prs, my_cursor), (reviews, review_cursor)) = response.into_page();
 
         assert_eq!(my_prs.len(), 1);
         assert_eq!(my_cursor, None);
         assert_eq!(my_prs[0].repo, "owner/mine");
         assert_eq!(my_prs[0].head_ref, "mine-branch");
-        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews.len(), 2);
         assert_eq!(review_cursor, None);
         assert_eq!(reviews[0].repo, "owner/review");
         assert_eq!(reviews[0].head_ref, "review-branch");
-        assert_eq!(reviews[0].review_requested, vec!["octocat".to_owned()]);
-        assert_eq!(reviews[0].reviewers[0].login, "octocat");
+        assert_eq!(
+            reviews[0].review_requested,
+            vec![ReviewRequestTarget::User("octocat".to_owned())]
+        );
+        assert_eq!(
+            reviews[1].review_requested,
+            vec![ReviewRequestTarget::Team("platform".to_owned())]
+        );
     }
 
     #[test]

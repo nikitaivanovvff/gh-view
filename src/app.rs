@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::github::{MockErrorMode, PullRequestSource};
 use crate::model::PullRequest;
 use dashboard::DashboardLoad;
-pub use dashboard::DashboardState;
+pub use dashboard::{DashboardState, ReviewScope};
 pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
 pub use rows::DashboardSection;
 pub use rows::Row;
@@ -182,6 +182,16 @@ impl App {
     pub fn cycle_dashboard_section(&mut self) -> bool {
         self.dashboard
             .cycle_section(&self.status, &self.config.dashboard)
+    }
+
+    pub fn set_review_scope(&mut self, scope: ReviewScope) -> bool {
+        self.dashboard
+            .set_review_scope(scope, &self.status, &self.config.dashboard)
+    }
+
+    pub fn cycle_review_scope(&mut self) -> bool {
+        self.dashboard
+            .cycle_review_scope(&self.status, &self.config.dashboard)
     }
 
     pub fn open_search(&mut self) {
@@ -631,7 +641,7 @@ pub enum AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::GhStatus;
+    use crate::github::{GhStatus, MockGhClient};
     use crate::model::{
         CheckStatus, DiscussionItem, DiscussionKind, PullRequestDetail, Reviewer, ReviewerState,
     };
@@ -803,6 +813,31 @@ mod tests {
             !app.rows()
                 .iter()
                 .any(|row| matches!(row, Row::Pr(pr) if pr.number == 1))
+        );
+    }
+
+    #[test]
+    fn awaiting_review_scope_filters_direct_and_team_requests() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+
+        assert_eq!(app.dashboard.review_scope_counts(), (7, 6, 2));
+        assert_eq!(app.dashboard.review_scope(), ReviewScope::All);
+
+        assert!(app.set_review_scope(ReviewScope::Team));
+        let team_numbers: Vec<_> = app
+            .rows()
+            .iter()
+            .filter_map(|row| row.pr().map(|pr| pr.number))
+            .collect();
+        assert_eq!(team_numbers, vec![314, 9]);
+
+        assert!(app.set_review_scope(ReviewScope::Direct));
+        assert!(
+            app.rows()
+                .iter()
+                .all(|row| !matches!(row, Row::Pr(pr) if !pr.has_direct_review_request("nikita")))
         );
     }
 
@@ -1294,7 +1329,9 @@ mod tests {
                 login: "reviewer".to_owned(),
                 state: ReviewerState::Approved,
             }],
-            review_requested: vec!["reviewer".to_owned()],
+            review_requested: vec![crate::model::ReviewRequestTarget::User(
+                "reviewer".to_owned(),
+            )],
         }
     }
 

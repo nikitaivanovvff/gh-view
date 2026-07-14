@@ -14,7 +14,35 @@ pub struct PullRequest {
     pub review_decision: Option<String>,
     pub check_status: Option<CheckStatus>,
     pub reviewers: Vec<Reviewer>,
-    pub review_requested: Vec<String>,
+    pub review_requested: Vec<ReviewRequestTarget>,
+}
+
+impl PullRequest {
+    pub fn has_direct_review_request(&self, login: &str) -> bool {
+        self.review_requested
+            .iter()
+            .any(|target| matches!(target, ReviewRequestTarget::User(user) if user == login))
+    }
+
+    pub fn has_team_review_request(&self) -> bool {
+        self.review_requested
+            .iter()
+            .any(|target| matches!(target, ReviewRequestTarget::Team(_)))
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ReviewRequestTarget {
+    User(String),
+    Team(String),
+}
+
+impl ReviewRequestTarget {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::User(name) | Self::Team(name) => name,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

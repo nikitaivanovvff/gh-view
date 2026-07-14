@@ -11,7 +11,7 @@ use crate::github::queries::{
     DETAIL_FIELDS, SEARCH_FIELDS, dashboard_query, dashboard_search_query, review_threads_query,
     split_repo,
 };
-use crate::model::{DiscussionItem, PullRequest, PullRequestDetail};
+use crate::model::{DiscussionItem, PullRequest, PullRequestDetail, ReviewRequestTarget};
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -68,6 +68,14 @@ impl GhClient {
         Ok(rows.into_iter().map(PullRequest::from).collect())
     }
 
+    fn search_review_requests(&self, login: &str) -> Result<Vec<PullRequest>> {
+        let direct_query = format!("user-review-requested:{login}");
+        let team_query = format!("team-review-requested-user:{login}");
+        let direct = self.search_prs(&[&direct_query])?;
+        let teams = self.search_prs(&[&team_query])?;
+        Ok(merge_review_requests(direct, teams, login))
+    }
+
     fn search_dashboard_graphql(&self, query: &str) -> Result<Vec<PullRequest>> {
         let mut cursor = None;
         let mut prs = Vec::new();
@@ -96,7 +104,7 @@ impl GhClient {
                 review_cursor.as_ref().map(|cursor| cursor.as_deref()),
             ))?;
             let ((my_page, next_my_cursor), (review_page, next_review_cursor)) =
-                response.into_page(login);
+                response.into_page();
             my_prs.extend(my_page);
             reviews.extend(review_page);
             if my_cursor.is_some() {
@@ -188,6 +196,37 @@ fn deduplicate_prs(prs: &mut Vec<PullRequest>) {
     prs.retain(|pr| seen.insert((pr.repo.clone(), pr.number)));
 }
 
+fn merge_review_requests(
+    mut direct: Vec<PullRequest>,
+    mut teams: Vec<PullRequest>,
+    login: &str,
+) -> Vec<PullRequest> {
+    for pr in &mut direct {
+        pr.review_requested
+            .push(ReviewRequestTarget::User(login.to_owned()));
+    }
+    for pr in &mut teams {
+        pr.review_requested
+            .push(ReviewRequestTarget::Team(String::new()));
+    }
+
+    for team_pr in teams {
+        if let Some(existing) = direct
+            .iter_mut()
+            .find(|pr| pr.repo == team_pr.repo && pr.number == team_pr.number)
+        {
+            existing.review_requested.extend(team_pr.review_requested);
+        } else {
+            direct.push(team_pr);
+        }
+    }
+    for pr in &mut direct {
+        pr.review_requested.sort();
+        pr.review_requested.dedup();
+    }
+    direct
+}
+
 impl PullRequestSource for GhClient {
     fn clone_box(&self) -> Box<dyn PullRequestSource> {
         Box::new(self.clone())
@@ -244,7 +283,7 @@ impl PullRequestSource for GhClient {
             Err(graphql_error) if should_fallback_to_search(&graphql_error) => (|| -> Result<_> {
                 Ok((
                     self.search_prs(&["--author", login])?,
-                    self.search_prs(&["--review-requested", login])?,
+                    self.search_review_requests(login)?,
                 ))
             })()
             .with_context(|| {
@@ -260,15 +299,12 @@ impl PullRequestSource for GhClient {
         ));
 
         match graphql_result {
-            Ok(prs) => Ok(prs
-                .into_iter()
-                .filter(|pr| pr.review_requested.iter().any(|reviewer| reviewer == login))
-                .collect()),
-            Err(graphql_error) if should_fallback_to_search(&graphql_error) => self
-                .search_prs(&["--review-requested", login])
-                .with_context(|| {
+            Ok(prs) => Ok(prs),
+            Err(graphql_error) if should_fallback_to_search(&graphql_error) => {
+                self.search_review_requests(login).with_context(|| {
                     format!("search fallback failed after GraphQL failure: {graphql_error}")
-                }),
+                })
+            }
             Err(error) => Err(error),
         }
     }
@@ -304,10 +340,10 @@ impl GhClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{GhClient, deduplicate_prs, should_fallback_to_search};
+    use super::{GhClient, deduplicate_prs, merge_review_requests, should_fallback_to_search};
     use crate::github::command::CommandRunner;
     use crate::github::{GhError, PullRequestSource};
-    use crate::model::PullRequest;
+    use crate::model::{PullRequest, ReviewRequestTarget};
     use anyhow::{Context, Result, anyhow};
     use std::collections::VecDeque;
     use std::os::unix::process::ExitStatusExt;
@@ -414,6 +450,7 @@ mod tests {
             ScriptedResult::Output(failure("GraphQL query failed")),
             ScriptedResult::Output(success("[]")),
             ScriptedResult::Output(success("[]")),
+            ScriptedResult::Output(success("[]")),
         ]);
         let client = GhClient::with_runner(runner.clone());
 
@@ -423,7 +460,11 @@ mod tests {
         let calls = runner.calls();
         assert_graphql_call(&calls[0]);
         assert_eq!(calls[1], search_args("--author"));
-        assert_eq!(calls[2], search_args("--review-requested"));
+        assert_eq!(calls[2], search_query_args("user-review-requested:octocat"));
+        assert_eq!(
+            calls[3],
+            search_query_args("team-review-requested-user:octocat")
+        );
     }
 
     #[test]
@@ -456,6 +497,28 @@ mod tests {
         assert_eq!(pages[0].number, 1);
         assert_eq!(pages[1].number, 2);
         assert_eq!(pages[2].repo, "other/repo");
+    }
+
+    #[test]
+    fn merges_direct_and_team_fallback_results_without_duplicates() {
+        let merged = merge_review_requests(
+            vec![pr("owner/repo", 1)],
+            vec![pr("owner/repo", 1), pr("owner/team", 2)],
+            "octocat",
+        );
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(
+            merged[0].review_requested,
+            vec![
+                ReviewRequestTarget::User("octocat".to_owned()),
+                ReviewRequestTarget::Team(String::new()),
+            ]
+        );
+        assert_eq!(
+            merged[1].review_requested,
+            vec![ReviewRequestTarget::Team(String::new())]
+        );
     }
 
     fn pr(repo: &str, number: u64) -> PullRequest {
@@ -502,6 +565,21 @@ mod tests {
             crate::github::queries::SEARCH_FIELDS,
             filter,
             "octocat",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    }
+
+    fn search_query_args(query: &str) -> Vec<String> {
+        [
+            "search",
+            "prs",
+            "--state",
+            "open",
+            "--json",
+            crate::github::queries::SEARCH_FIELDS,
+            query,
         ]
         .into_iter()
         .map(str::to_owned)

@@ -90,7 +90,7 @@ fn candidate_text(section: &str, pr: &PullRequest) -> String {
         .reviewers
         .iter()
         .map(|reviewer| reviewer.login.as_str())
-        .chain(pr.review_requested.iter().map(String::as_str))
+        .chain(pr.review_requested.iter().map(|target| target.name()))
         .collect::<Vec<_>>()
         .join(" ");
     let check_status = pr.check_status.as_ref().map_or("", CheckStatus::label);
@@ -122,7 +122,7 @@ impl SearchCandidate<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{CheckStatus, Reviewer, ReviewerState};
+    use crate::model::{CheckStatus, ReviewRequestTarget, Reviewer, ReviewerState};
 
     #[test]
     fn empty_query_returns_all_prs_in_dashboard_order() {
@@ -147,7 +147,7 @@ mod tests {
             login: "carol".to_owned(),
             state: ReviewerState::Approved,
         }];
-        first.review_requested = vec!["dave".to_owned()];
+        first.review_requested = vec![ReviewRequestTarget::User("dave".to_owned())];
         first.review_decision = Some("APPROVED".to_owned());
         first.check_status = Some(CheckStatus::Passing);
         let dashboard = Dashboard::from_prs(vec![first], vec![pr("owner/web", 7, "Navbar", "bob")]);

@@ -9,12 +9,40 @@ use std::sync::mpsc::Receiver;
 pub(super) type DashboardLoad = Result<(String, Vec<PullRequest>, Vec<PullRequest>), AppStatus>;
 pub(super) type DashboardReceiver = Receiver<DashboardLoad>;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ReviewScope {
+    #[default]
+    All,
+    Direct,
+    Team,
+}
+
+impl ReviewScope {
+    fn matches(self, pr: &PullRequest, login: &str) -> bool {
+        let direct = pr.has_direct_review_request(login);
+        match self {
+            Self::All => true,
+            Self::Direct => direct,
+            Self::Team => pr.has_team_review_request(),
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::Direct,
+            Self::Direct => Self::Team,
+            Self::Team => Self::All,
+        }
+    }
+}
+
 pub struct DashboardState {
     pub data: Dashboard,
     pub current_user: Option<String>,
     pub selected: usize,
     pub scroll: u16,
     active_section: DashboardSection,
+    review_scope: ReviewScope,
     section_positions: [DashboardPosition; 2],
     pub(super) search: Option<DashboardSearchState>,
     pub loading: bool,
@@ -37,6 +65,7 @@ impl DashboardState {
             selected: 0,
             scroll: 0,
             active_section: DashboardSection::MyPrs,
+            review_scope: ReviewScope::All,
             section_positions: [DashboardPosition::default(); 2],
             search: None,
             loading: false,
@@ -77,23 +106,80 @@ impl DashboardState {
         section: DashboardSection,
         page_size: usize,
     ) {
-        let groups = match section {
-            DashboardSection::MyPrs => &self.data.my_prs,
-            DashboardSection::AwaitingReview => &self.data.awaiting_review,
-        };
         rows.push(Row::Section);
-        push_groups(
-            rows,
-            section,
-            groups,
-            &self.collapsed_groups,
-            &self.repo_pages,
-            page_size,
-        );
+        match section {
+            DashboardSection::MyPrs => push_groups(
+                rows,
+                section,
+                &self.data.my_prs,
+                &self.collapsed_groups,
+                &self.repo_pages,
+                page_size,
+                |_| Some(false),
+            ),
+            DashboardSection::AwaitingReview => {
+                let login = self.current_user.as_deref().unwrap_or_default();
+                push_groups(
+                    rows,
+                    section,
+                    &self.data.awaiting_review,
+                    &self.collapsed_groups,
+                    &self.repo_pages,
+                    page_size,
+                    |pr| {
+                        self.review_scope
+                            .matches(pr, login)
+                            .then(|| pr.has_direct_review_request(login))
+                    },
+                );
+            }
+        }
     }
 
     pub fn active_section(&self) -> DashboardSection {
         self.active_section
+    }
+
+    pub fn review_scope(&self) -> ReviewScope {
+        self.review_scope
+    }
+
+    pub fn review_scope_counts(&self) -> (usize, usize, usize) {
+        let login = self.current_user.as_deref().unwrap_or_default();
+        let all = self
+            .data
+            .awaiting_review
+            .iter()
+            .flat_map(|group| &group.prs);
+        let (mut total, mut direct, mut team) = (0, 0, 0);
+        for pr in all {
+            total += 1;
+            let is_direct = pr.has_direct_review_request(login);
+            direct += usize::from(is_direct);
+            team += usize::from(pr.has_team_review_request());
+        }
+        (total, direct, team)
+    }
+
+    pub fn set_review_scope(
+        &mut self,
+        scope: ReviewScope,
+        status: &AppStatus,
+        config: &DashboardConfig,
+    ) -> bool {
+        if self.active_section != DashboardSection::AwaitingReview || self.review_scope == scope {
+            return false;
+        }
+        self.review_scope = scope;
+        self.selected = 0;
+        self.scroll = 0;
+        self.clamp_repo_pages(config.prs_per_repo_page);
+        self.clamp_selection(status, config);
+        true
+    }
+
+    pub fn cycle_review_scope(&mut self, status: &AppStatus, config: &DashboardConfig) -> bool {
+        self.set_review_scope(self.review_scope.next(), status, config)
     }
 
     pub fn show_section(
@@ -231,6 +317,7 @@ impl DashboardState {
     }
 
     fn clamp_repo_pages(&mut self, page_size: usize) {
+        let login = self.current_user.as_deref().unwrap_or_default();
         let max_pages: BTreeMap<_, _> = self
             .data
             .my_prs
@@ -242,9 +329,14 @@ impl DashboardState {
                 )
             })
             .chain(self.data.awaiting_review.iter().map(|group| {
+                let count = group
+                    .prs
+                    .iter()
+                    .filter(|pr| self.review_scope.matches(pr, login))
+                    .count();
                 (
                     group_key(DashboardSection::AwaitingReview, &group.repo),
-                    page_count(group.prs.len(), page_size) - 1,
+                    page_count(count, page_size) - 1,
                 )
             }))
             .collect();
@@ -270,7 +362,20 @@ impl DashboardState {
                     .map(|group| (DashboardSection::AwaitingReview, group)),
             )
             .find(|(section, group)| group_key(*section, &group.repo) == key)
-            .map(|(_, group)| page_count(group.prs.len(), page_size) - 1)
+            .map(|(section, group)| {
+                let count = match section {
+                    DashboardSection::MyPrs => group.prs.len(),
+                    DashboardSection::AwaitingReview => {
+                        let login = self.current_user.as_deref().unwrap_or_default();
+                        group
+                            .prs
+                            .iter()
+                            .filter(|pr| self.review_scope.matches(pr, login))
+                            .count()
+                    }
+                };
+                page_count(count, page_size) - 1
+            })
     }
 
     pub fn show_loading_screen(&self) -> bool {

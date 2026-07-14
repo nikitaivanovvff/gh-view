@@ -1,9 +1,10 @@
-use crate::app::{DashboardSection, DetailPane};
+use crate::app::{DashboardSection, DetailPane, ReviewScope};
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MouseTarget {
     DashboardSection(DashboardSection),
+    ReviewScope(ReviewScope),
     DashboardRow(usize),
     DetailPane(DetailPane),
     SearchMatch(usize),

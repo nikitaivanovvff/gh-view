@@ -64,23 +64,37 @@ impl DashboardSection {
     }
 }
 
-pub(super) fn push_groups<'a>(
+pub(super) fn push_groups<'a, F>(
     rows: &mut Vec<Row<'a>>,
     section: DashboardSection,
     groups: &'a [RepoGroup],
     collapsed: &BTreeSet<String>,
     pages: &BTreeMap<String, usize>,
     page_size: usize,
-) {
-    if groups.is_empty() {
-        rows.push(Row::Message("  none".to_owned()));
-        return;
-    }
+    project: F,
+) where
+    F: Fn(&PullRequest) -> Option<bool>,
+{
+    let mut shown_group = false;
 
     for group in groups {
+        let mut matching: Vec<_> = group
+            .prs
+            .iter()
+            .filter_map(|pr| project(pr).map(|priority| (priority, pr)))
+            .collect();
+        if matching.is_empty() {
+            continue;
+        }
+        matching.sort_by(|(left_priority, left), (right_priority, right)| {
+            right_priority
+                .cmp(left_priority)
+                .then_with(|| left.updated_at.cmp(&right.updated_at))
+        });
+        shown_group = true;
         let key = group_key(section, &group.repo);
         let open = !collapsed.contains(&key);
-        let page_count = page_count(group.prs.len(), page_size);
+        let page_count = page_count(matching.len(), page_size);
         let page = pages
             .get(&key)
             .copied()
@@ -89,7 +103,7 @@ pub(super) fn push_groups<'a>(
         rows.push(Row::Group {
             section,
             repo: &group.repo,
-            count: group.prs.len(),
+            count: matching.len(),
             open,
             page: page + 1,
             page_count,
@@ -97,9 +111,13 @@ pub(super) fn push_groups<'a>(
 
         if open {
             let start = page * page_size;
-            let end = (start + page_size).min(group.prs.len());
-            rows.extend(group.prs[start..end].iter().map(Row::Pr));
+            let end = (start + page_size).min(matching.len());
+            rows.extend(matching[start..end].iter().map(|(_, pr)| Row::Pr(pr)));
         }
+    }
+
+    if !shown_group {
+        rows.push(Row::Message("  none".to_owned()));
     }
 }
 
@@ -144,6 +162,7 @@ mod tests {
             &BTreeSet::new(),
             &BTreeMap::new(),
             DEFAULT_PRS_PER_REPO_PAGE,
+            |_| Some(false),
         );
 
         assert!(matches!(rows.as_slice(), [Row::Message(message)] if message == "  none"));
@@ -167,6 +186,7 @@ mod tests {
             &collapsed,
             &BTreeMap::new(),
             DEFAULT_PRS_PER_REPO_PAGE,
+            |_| Some(false),
         );
         push_groups(
             &mut expanded_rows,
@@ -175,6 +195,7 @@ mod tests {
             &collapsed,
             &BTreeMap::new(),
             DEFAULT_PRS_PER_REPO_PAGE,
+            |_| Some(false),
         );
 
         assert!(matches!(
@@ -216,6 +237,7 @@ mod tests {
             &BTreeSet::new(),
             &pages,
             DEFAULT_PRS_PER_REPO_PAGE,
+            |_| Some(false),
         );
 
         assert!(matches!(

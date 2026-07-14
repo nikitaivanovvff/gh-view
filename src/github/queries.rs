@@ -128,7 +128,7 @@ fragment DashboardPullRequestFields on PullRequest {
     nodes {
       requestedReviewer {
         ... on User { login __typename }
-        ... on Team { name __typename }
+        ... on Team { name slug organization { login } __typename }
       }
     }
   }
@@ -163,6 +163,7 @@ mod tests {
         assert!(query.contains("reviewRequests: search"));
         assert!(query.contains(r#"author:octo\\\"cat"#));
         assert!(query.contains(r#"review-requested:octo\\\"cat"#));
+        assert!(query.contains("slug organization { login }"));
     }
 
     #[test]
