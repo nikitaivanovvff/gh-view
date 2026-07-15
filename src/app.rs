@@ -854,6 +854,16 @@ mod tests {
                 .iter()
                 .all(|row| !matches!(row, Row::Pr(pr) if !pr.has_direct_review_request("nikita")))
         );
+        let overlapping = app
+            .dashboard
+            .data
+            .awaiting_review
+            .iter()
+            .flat_map(|group| &group.prs)
+            .find(|pr| pr.number == 9)
+            .unwrap();
+        assert!(overlapping.has_direct_review_request("nikita"));
+        assert!(overlapping.has_team_review_request());
     }
 
     #[test]

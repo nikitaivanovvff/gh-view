@@ -303,7 +303,6 @@ Avoid using `requested`, `needs review`, and `awaiting review` interchangeably. 
 
 ### Remaining Gaps
 
-- Direct and team filter counts overlap without an explanation in the UI.
 - The Awaiting Review primary count is total loaded PRs even when a narrower filter is active.
 - Reviewer results still depend too heavily on color; long lists are bounded but do not summarize omitted identities.
 - Repository rows use the short repository name even when identical names from different owners need disambiguation.
@@ -332,7 +331,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: retain overlapping categories and document that a PR may appear in both.
 - Option B: make `team` mean team-only, excluding direct requests.
 - Option C: replace filters with explicit inclusive labels such as `direct [6]` and `via team [2]` plus an overlap hint.
-- **Recommendation:** Option A with concise documentation/help. It follows GitHub's data and avoids hiding a team request merely because the user was also requested directly.
+- **Accepted:** Option A. Direct and team remain overlapping GitHub relationships, and the README explains that their counts are not additive.
 
 ### 3. Primary Review Terminology
 
@@ -428,7 +427,7 @@ Each question requires an explicit product decision before a behavior-changing i
 ### P2: Product Semantics
 
 1. Decide primary review terminology and aggregate status semantics.
-2. Decide filtered primary counts and document direct/team overlap.
+2. Keep filter-count terminology aligned with GitHub relationship semantics.
 3. Deduplicate global search according to the selected identity policy.
 4. Decide refresh and dashboard mouse activation behavior.
 5. Decide whether discussion URLs need a separate browser action.
