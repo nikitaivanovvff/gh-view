@@ -215,7 +215,7 @@ This inventory names recurring presentations without requiring component objects
 | PR row | `needs review  #42 Fix parser   !12d   ci×` | Three-line compact unit; title truncates; age/CI align when present |
 | Identity list | `@octocat  @owner/core` | Every user/team is prefixed with `@`; outcome uses semantic color and approved-first ordering |
 | Section header | `DESCRIPTION`, `DISCUSSION  1/4` | Uppercase label; navigation fraction remains unbracketed |
-| Footer | `q quit   j/k move   / search` | Lowercase, muted, prioritized whole controls |
+| Footer | `q quit   j/k move   / search` | Lowercase, muted, prioritized whole controls; centered overflow hint overlays the rule above |
 | Search overlay | `Search PRs  / parser` | Modal focus border, visible query, bounded result rows and footer |
 | Theme picker | `▸ Tokyo Night  clean neon city contrast` | Live preview, popup selection background, save/cancel hints |
 | Loading state | `Loading PRs...` | Name the region being loaded; animation is supplementary |

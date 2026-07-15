@@ -229,12 +229,6 @@ fn dashboard_footer_lines(
     let rows = app.rows();
     let selected = rows.get(app.dashboard.selected);
     let mut items = vec![FooterItem::new("q", "quit"), FooterItem::new("j/k", "move")];
-    match (scroll > 0, scroll < max_scroll) {
-        (true, true) => items.push(FooterItem::new("↑/↓", "more")),
-        (true, false) => items.push(FooterItem::new("↑", "more")),
-        (false, true) => items.push(FooterItem::new("↓", "more")),
-        (false, false) => {}
-    }
     items.extend([
         FooterItem::new("tab", "view"),
         FooterItem::new("/", "search"),
@@ -273,7 +267,31 @@ fn dashboard_footer_lines(
             FooterItem::new("f1", "debug"),
         ]);
     }
-    footer_lines(width, items)
+    let mut lines = footer_lines(width, items);
+    lines[0] = overflow_hint_rule(width, scroll > 0, scroll < max_scroll);
+    lines
+}
+
+fn overflow_hint_rule(width: usize, more_above: bool, more_below: bool) -> Line<'static> {
+    let hint = match (more_above, more_below) {
+        (true, true) => " ↑/↓ more ",
+        (true, false) => " ↑ more ",
+        (false, true) => " ↓ more ",
+        (false, false) => return rule_line(width),
+    };
+    let hint_width = display_width(hint).min(width);
+    let left_width = width.saturating_sub(hint_width) / 2;
+    let right_width = width.saturating_sub(left_width + hint_width);
+    Line::from(vec![
+        Span::styled("━".repeat(left_width), theme::rule()),
+        Span::styled(
+            truncate(hint, hint_width),
+            theme::accent()
+                .add_modifier(Modifier::BOLD)
+                .patch(theme::selection()),
+        ),
+        Span::styled("━".repeat(right_width), theme::rule()),
+    ])
 }
 
 fn render_search_overlay(
@@ -1101,6 +1119,19 @@ mod tests {
         assert_eq!(scroll_for_selection(0, 8, 7, 3), 2);
         assert_eq!(scroll_for_selection(5, 8, 3, 1), 3);
         assert_eq!(scroll_for_selection(2, 8, 3, 3), 2);
+    }
+
+    #[test]
+    fn overflow_hint_is_centered_in_the_footer_rule() {
+        let line = overflow_hint_rule(40, false, true).to_string();
+        let hint_start = display_width(&line[..line.find("↓ more").unwrap()]);
+
+        assert!((17..=18).contains(&hint_start));
+        assert_eq!(display_width(&line), 40);
+        assert_eq!(
+            overflow_hint_rule(40, false, false).to_string(),
+            "━".repeat(40)
+        );
     }
 
     #[test]
