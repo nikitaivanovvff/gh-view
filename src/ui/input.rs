@@ -489,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_mouse_wheel_scrolls_and_click_selects_or_opens_rows() {
+    fn dashboard_mouse_selects_first_and_activates_selected_pr() {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 

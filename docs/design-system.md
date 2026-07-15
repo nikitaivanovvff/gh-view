@@ -365,7 +365,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: retain select-first, click-selected-to-activate behavior.
 - Option B: single-click activates rows immediately.
 - Option C: single-click selects and a true timed double-click activates.
-- **Recommendation:** Option A for now. It is safe in a TUI and matches keyboard selection plus Enter, but it should be documented explicitly if retained.
+- **Accepted:** Option A. Dashboard rows select on the first click and activate when the selected row is clicked again; search results remain single-click actions.
 
 ### 8. Refresh Presentation
 
@@ -428,7 +428,7 @@ Each question requires an explicit product decision before a behavior-changing i
 1. Decide primary review terminology and aggregate status semantics.
 2. Keep filter-count terminology aligned with GitHub relationship semantics.
 3. Deduplicate global search according to the selected identity policy.
-4. Decide refresh and dashboard mouse activation behavior.
+4. Keep documented mouse behavior aligned with input tests.
 5. Decide whether discussion URLs need a separate browser action.
 
 ### P3: Regression Coverage
