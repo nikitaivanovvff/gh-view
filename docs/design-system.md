@@ -307,13 +307,13 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 - Repository rows use the short repository name even when identical names from different owners need disambiguation.
 - Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
 - Search may hide the field that caused a fuzzy match.
-- Search and theme picker need dedicated tiny-height behavior and list scrolling.
+- Theme picker selection does not scroll independently if the theme list later grows beyond its minimum-height popup.
 - Selection and scroll can diverge, allowing keyboard selection to move outside the visible viewport.
 - There is no broad visual regression suite; current render tests focus mainly on mouse geometry.
 
-## Open Questions
+## Accepted Decisions
 
-Each question requires an explicit product decision before a behavior-changing implementation.
+These decisions resolve the initial design audit. Options remain recorded to preserve the tradeoffs and rationale behind current behavior.
 
 ### 1. Review Requests Count
 
@@ -407,31 +407,23 @@ Each question requires an explicit product decision before a behavior-changing i
 ### P0: Correctness And Understandability
 
 1. Keep selected dashboard rows visible and clamp stored scroll after data, filter, page, and resize changes.
-2. Ensure search and theme overlays always have a visible tiny-terminal mode or refuse to open.
-3. Surface every classified refresh error while retaining loaded data.
-4. Add no-color reviewer outcome notation and bound reviewer identity lists.
-5. Validate and repair informational text and focus contrast in every dark and light palette.
+2. Add no-color reviewer outcome notation and summarize omitted reviewer identities.
 
 ### P1: Responsive Consistency
 
 1. Give detail metadata explicit field priorities and display-cell budgets.
-2. Resolve the narrow discussion/code-context layout question and test representative widths.
-3. Add theme-picker list scrolling and compact preview/help variants.
-4. Prioritize problem/remediation over art on short error pages and add a minimal error footer.
-5. Make search query tail/cursor visible and show why a result matched.
+2. Add theme-picker list scrolling if the available theme list outgrows the minimum popup.
+3. Make search query tail/cursor visible and show why a result matched.
 
-### P2: Product Semantics
+### P2: Identity And Terminology
 
-1. Decide primary review terminology and aggregate status semantics.
+1. Disambiguate repositories with identical short names from different owners.
 2. Keep filter-count terminology aligned with GitHub relationship semantics.
-3. Deduplicate global search according to the selected identity policy.
-4. Keep documented mouse behavior aligned with input tests.
-5. Keep browser destination labels explicit when adding future actions.
+3. Keep documented mouse behavior aligned with input tests.
+4. Keep browser destination labels explicit when adding future actions.
 
 ### P3: Regression Coverage
 
-1. Add a small number of Ratatui `TestBackend` assertions for dashboard and detail at wide, 80-column, narrow, and tiny sizes.
-2. Test long repository, branch, user, team, title, reviewer, path, and unknown-status strings.
-3. Test exact rendered mouse geometry after scrolling, clipping, overlays, and nonzero origins.
-4. Add deterministic palette contrast tests against background and selection surfaces.
-5. Prefer focused buffer assertions over a large snapshot framework until update volume demonstrates clear value.
+1. Expand Ratatui `TestBackend` coverage for additional detail loading/error combinations.
+2. Test exact rendered mouse geometry after resize and nonzero origins.
+3. Prefer focused buffer assertions over a large snapshot framework until update volume demonstrates clear value.
