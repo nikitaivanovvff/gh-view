@@ -303,7 +303,6 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 
 ### Remaining Gaps
 
-- Reviewer results still depend too heavily on color; long lists are bounded but do not summarize omitted identities.
 - Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
 - Search may hide the field that caused a fuzzy match.
 - Theme picker selection does not scroll independently if the theme list later grows beyond its minimum-height popup.
@@ -401,10 +400,6 @@ These decisions resolve the initial design audit. Options remain recorded to pre
 - **Accepted:** Option B. Full-page errors retain an `r retry   q quit` footer with an exact mouse retry target, and decorative art is omitted before remediation when height is constrained.
 
 ## Implementation Roadmap
-
-### P0: Correctness And Understandability
-
-1. Add no-color reviewer outcome notation and summarize omitted reviewer identities.
 
 ### P1: Responsive Consistency
 

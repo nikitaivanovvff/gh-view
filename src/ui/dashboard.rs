@@ -773,11 +773,12 @@ pub(super) fn reviewers_line(selected: bool, pr: &PullRequest, width: usize) -> 
     let gutter = if selected { "│" } else { " " };
     let indent_width = width.saturating_sub(1).min(7);
     let indent = " ".repeat(indent_width);
-    let completed_reviewers: Vec<_> = pr
+    let mut completed_reviewers: Vec<_> = pr
         .reviewers
         .iter()
         .filter(|reviewer| reviewer.state != crate::model::ReviewerState::Requested)
         .collect();
+    completed_reviewers.sort_by_key(|reviewer| reviewer_priority(reviewer.state));
     if pr.review_requested.is_empty() && completed_reviewers.is_empty() {
         return Line::from(vec![
             Span::styled(gutter, selected_style()),
@@ -789,67 +790,91 @@ pub(super) fn reviewers_line(selected: bool, pr: &PullRequest, width: usize) -> 
         ]);
     }
 
+    let mut entries = completed_reviewers
+        .into_iter()
+        .map(|reviewer| ReviewerEntry {
+            label: format!("{} @{}", reviewer_marker(reviewer.state), reviewer.login),
+            style: reviewer_style(reviewer.state),
+        })
+        .collect::<Vec<_>>();
+    entries.extend(pr.review_requested.iter().map(|target| {
+        let identity = match target {
+            crate::model::ReviewRequestTarget::User(login) => format!("@{login}"),
+            crate::model::ReviewRequestTarget::Team(team) if team.is_empty() => {
+                "@your-team".to_owned()
+            }
+            crate::model::ReviewRequestTarget::Team(team) => format!("@{team}"),
+        };
+        ReviewerEntry {
+            label: format!("? {identity}"),
+            style: theme::reviewer(),
+        }
+    }));
+
     let mut spans = vec![Span::styled(gutter, selected_style()), Span::raw(indent)];
     let mut used = 1 + indent_width;
-    if !pr.review_requested.is_empty() {
-        if !push_fitted(&mut spans, "requested: ", theme::muted(), &mut used, width) {
-            return Line::from(spans);
-        }
-        for (index, target) in pr.review_requested.iter().enumerate() {
-            if index > 0 && !push_fitted(&mut spans, ", ", theme::normal(), &mut used, width) {
-                break;
-            }
-            let label = match target {
-                crate::model::ReviewRequestTarget::User(login) => format!("@{login}"),
-                crate::model::ReviewRequestTarget::Team(team) if team.is_empty() => {
-                    "your team".to_owned()
-                }
-                crate::model::ReviewRequestTarget::Team(team) => format!("@{team}"),
-            };
-            if !push_fitted(&mut spans, &label, theme::reviewer(), &mut used, width) {
-                break;
-            }
-        }
-    }
-    for (index, reviewer) in completed_reviewers.iter().enumerate() {
-        if index == 0
-            && !pr.review_requested.is_empty()
-            && !push_fitted(&mut spans, "  ", theme::normal(), &mut used, width)
-        {
+    for (index, entry) in entries.iter().enumerate() {
+        let separator_width = usize::from(index > 0) * 2;
+        let remaining = entries.len().saturating_sub(index + 1);
+        let summary_width = if remaining > 0 {
+            2 + display_width(&format!("+{remaining}"))
+        } else {
+            0
+        };
+        let entry_width = display_width(&entry.label);
+        if used + separator_width + entry_width + summary_width > width {
+            push_reviewer_summary(&mut spans, &mut used, width, entries.len() - index);
             break;
         }
-        if index > 0 && !push_fitted(&mut spans, "  ", theme::normal(), &mut used, width) {
-            break;
+        if index > 0 {
+            spans.push(Span::raw("  "));
+            used += 2;
         }
-        if !push_fitted(
-            &mut spans,
-            &format!("@{}", reviewer.login),
-            reviewer_style(reviewer.state),
-            &mut used,
-            width,
-        ) {
-            break;
-        }
+        spans.push(Span::styled(entry.label.clone(), entry.style));
+        used += entry_width;
     }
 
     Line::from(spans)
 }
 
-fn push_fitted(
-    spans: &mut Vec<Span<'static>>,
-    value: &str,
+struct ReviewerEntry {
+    label: String,
     style: ratatui::style::Style,
+}
+
+fn reviewer_priority(state: crate::model::ReviewerState) -> u8 {
+    match state {
+        crate::model::ReviewerState::Approved => 0,
+        crate::model::ReviewerState::ChangesRequested => 1,
+        crate::model::ReviewerState::Commented => 2,
+        crate::model::ReviewerState::Requested => 3,
+    }
+}
+
+fn reviewer_marker(state: crate::model::ReviewerState) -> &'static str {
+    match state {
+        crate::model::ReviewerState::Approved => "✓",
+        crate::model::ReviewerState::ChangesRequested => "!",
+        crate::model::ReviewerState::Commented => "·",
+        crate::model::ReviewerState::Requested => "?",
+    }
+}
+
+fn push_reviewer_summary(
+    spans: &mut Vec<Span<'static>>,
     used: &mut usize,
     width: usize,
-) -> bool {
-    let remaining = width.saturating_sub(*used);
-    let fitted = truncate(value, remaining);
-    let complete = fitted == value;
-    *used += display_width(&fitted);
-    if !fitted.is_empty() {
-        spans.push(Span::styled(fitted, style));
+    omitted: usize,
+) {
+    let label = format!("+{omitted}");
+    let separator = usize::from(spans.len() > 2) * 2;
+    if *used + separator + display_width(&label) <= width {
+        if separator > 0 {
+            spans.push(Span::raw("  "));
+            *used += separator;
+        }
+        spans.push(Span::styled(label, theme::muted_key()));
     }
-    complete
 }
 
 pub(super) fn message_line(selected: bool, message: &str, width: usize) -> Line<'static> {
@@ -948,6 +973,10 @@ mod tests {
         assert!(line.contains("@alice"));
         assert!(line.contains("@bob"));
         assert!(line.contains("@carol"));
+        assert!(line.contains("✓ @alice"));
+        assert!(line.contains("! @bob"));
+        assert!(line.contains("? @carol"));
+        assert!(line.find("@alice").unwrap() < line.find("@bob").unwrap());
         assert!(!line.contains("you"));
     }
 
@@ -961,7 +990,33 @@ mod tests {
         let line = reviewers_line(false, &pr, 80).to_string();
 
         assert!(line.contains("@owner/core-team"));
+        assert!(line.contains("? @owner/core-team"));
         assert!(!line.contains("no reviewers"));
+    }
+
+    #[test]
+    fn reviewer_line_summarizes_identities_that_do_not_fit() {
+        let mut pr = pr();
+        pr.reviewers = vec![
+            crate::model::Reviewer {
+                login: "approved-reviewer".to_owned(),
+                state: ReviewerState::Approved,
+            },
+            crate::model::Reviewer {
+                login: "changes-reviewer".to_owned(),
+                state: ReviewerState::ChangesRequested,
+            },
+            crate::model::Reviewer {
+                login: "comment-reviewer".to_owned(),
+                state: ReviewerState::Commented,
+            },
+        ];
+
+        let line = reviewers_line(false, &pr, 36).to_string();
+
+        assert!(line.contains("✓ @approved-reviewer"));
+        assert!(line.contains("+2"));
+        assert!(display_width(&line) <= 36);
     }
 
     #[test]
