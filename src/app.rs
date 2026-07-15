@@ -336,6 +336,11 @@ impl App {
 
         if let Some(section) = item.sections.first().copied() {
             self.show_dashboard_section(section);
+            if section == DashboardSection::AwaitingReview
+                && !self.dashboard.review_scope_includes(&item.pr)
+            {
+                self.set_review_scope(ReviewScope::All);
+            }
         }
         self.dashboard.close_search();
         self.open_detail_for_pr(item.pr);
@@ -1210,6 +1215,30 @@ mod tests {
         assert_eq!(
             app.dashboard.active_section(),
             DashboardSection::AwaitingReview
+        );
+    }
+
+    #[test]
+    fn opening_hidden_review_request_search_result_switches_to_all() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+        app.set_review_scope(ReviewScope::Direct);
+        app.open_search();
+        for ch in "314".chars() {
+            app.push_search_char(ch);
+        }
+
+        app.open_selected_search_match();
+
+        assert_eq!(
+            app.dashboard.active_section(),
+            DashboardSection::AwaitingReview
+        );
+        assert_eq!(app.dashboard.review_scope(), ReviewScope::All);
+        assert_eq!(
+            app.detail.current.as_ref().map(|detail| detail.pr.number),
+            Some(314)
         );
     }
 

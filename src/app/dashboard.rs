@@ -149,6 +149,11 @@ impl DashboardState {
         self.review_scope
     }
 
+    pub(super) fn review_scope_includes(&self, pr: &PullRequest) -> bool {
+        self.review_scope
+            .matches(pr, self.current_user.as_deref().unwrap_or_default())
+    }
+
     pub fn review_scope_counts(&self) -> (usize, usize, usize) {
         let login = self.current_user.as_deref().unwrap_or_default();
         let all = self

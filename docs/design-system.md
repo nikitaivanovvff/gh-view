@@ -358,7 +358,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: opening a result preserves the active filter even if the PR is excluded from it.
 - Option B: switch Review Requests to `all` when needed.
 - Option C: keep the scope and show a temporary explanation on return.
-- **Recommendation:** Option B. Returning to a view that visibly contains the opened result is the least surprising behavior.
+- **Accepted:** Option B. Opening a review-request result that the active direct/team filter hides switches the view to `all`, so returning shows the opened PR.
 
 ### 7. Dashboard Mouse Activation
 
