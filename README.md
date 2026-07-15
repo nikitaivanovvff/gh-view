@@ -30,6 +30,7 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
   - PRs awaiting your direct review or review from one of your teams
 - Review-request filters for all, direct, and team requests
 - Compact PR rows with review state, CI state, reviewers, and age
+- Sticky dashboard identity, navigation, and review-filter header
 - Dashboard fuzzy finder for quickly opening loaded PRs by repo, branch, title, author, reviewer, status, or section
 - Keyboard and mouse navigation across dashboard, search, detail, and theme controls
 - Runtime theme picker with dark and light presets and persistent selection

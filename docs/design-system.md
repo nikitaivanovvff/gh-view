@@ -208,8 +208,8 @@ This inventory names recurring presentations without requiring component objects
 
 | Component | Example | Rules |
 | --- | --- | --- |
-| App header | `GH-VIEW  @octocat` | Accent product name, muted identity, optional right notice |
-| Primary navigation | `1 MY PRS [2]    2 REVIEW REQUESTS [7]` | Uppercase, accent active item, exact clickable label geometry |
+| App header | `GH-VIEW  @octocat` | Accent product name, muted identity, optional right notice; remains fixed above dashboard rows |
+| Primary navigation | `1 MY PRS [2]    2 REVIEW REQUESTS [7]` | Uppercase, accent active item, exact clickable label geometry; remains fixed with the dashboard header |
 | Secondary filter | `all [7]   direct [6]   team [2]` | Lowercase, muted, active emphasis; compact active fallback on narrow widths |
 | Repository row | `▾ owner/repo   [6 PRs]   page 1/2` | Bold repository, bracketed quantity, fractional page position |
 | PR row | `needs review  #42 Fix parser   !12d   ci×` | Three-line compact unit; title truncates; age/CI align when present |

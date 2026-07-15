@@ -37,12 +37,16 @@ pub(super) fn render_dashboard(
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(1),
+            Constraint::Length(2),
+        ])
         .split(area);
 
     let rows = app.rows();
     let selected = app.dashboard.selected.min(rows.len().saturating_sub(1));
-    let width = chunks[0].width as usize;
+    let width = chunks[1].width as usize;
     let mut lines = Vec::new();
     let mut targets = Vec::new();
     let mut selected_lines = None;
@@ -76,42 +80,44 @@ pub(super) fn render_dashboard(
         Span::raw(" ".repeat(padding)),
         Span::styled(notice, notice_style),
     ];
-    lines.push(Line::from(header));
-    lines.push(rule_line(width));
+    let mut header_lines = vec![Line::from(header), rule_line(width)];
+    header_lines.extend(dashboard_view_lines(app, width));
+
+    let mut x = 0usize;
+    for (label_index, section) in [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
+        .into_iter()
+        .enumerate()
+    {
+        let label = dashboard_view_label(app, section, label_index);
+        mouse_layout.push(
+            Rect::new(
+                chunks[0].x.saturating_add(x.min(u16::MAX as usize) as u16),
+                chunks[0].y.saturating_add(2),
+                display_width(&label).min(u16::MAX as usize) as u16,
+                1,
+            ),
+            MouseTarget::DashboardSection(section),
+        );
+        x += display_width(&label) + DASHBOARD_VIEW_GAP;
+    }
+    if app.dashboard.active_section() == DashboardSection::AwaitingReview {
+        for (scope, label, x) in review_scope_placements(app, width) {
+            mouse_layout.push(
+                Rect::new(
+                    chunks[0].x.saturating_add(x.min(u16::MAX as usize) as u16),
+                    chunks[0].y.saturating_add(2),
+                    display_width(&label).min(u16::MAX as usize) as u16,
+                    1,
+                ),
+                MouseTarget::ReviewScope(scope),
+            );
+        }
+    }
+
     for (index, row) in rows.iter().enumerate() {
         let line_start = lines.len();
         match row {
-            Row::Section => {
-                let line = lines.len();
-                let mut x = 0usize;
-                for (label_index, section) in
-                    [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
-                        .into_iter()
-                        .enumerate()
-                {
-                    let label = dashboard_view_label(app, section, label_index);
-                    targets.push((
-                        line,
-                        1,
-                        x,
-                        label.chars().count(),
-                        MouseTarget::DashboardSection(section),
-                    ));
-                    x += label.chars().count() + DASHBOARD_VIEW_GAP;
-                }
-                if app.dashboard.active_section() == DashboardSection::AwaitingReview {
-                    for (scope, label, x) in review_scope_placements(app, width) {
-                        targets.push((
-                            line,
-                            1,
-                            x,
-                            label.chars().count(),
-                            MouseTarget::ReviewScope(scope),
-                        ));
-                    }
-                }
-                lines.extend(dashboard_view_lines(app, width));
-            }
+            Row::Section => continue,
             Row::Group {
                 repo,
                 count,
@@ -148,25 +154,29 @@ pub(super) fn render_dashboard(
         }
     }
 
-    let max_scroll = max_scroll(lines.len(), chunks[0].height);
+    let max_scroll = max_scroll(lines.len(), chunks[1].height);
     let mut scroll = app.dashboard.scroll.min(max_scroll);
     if app.dashboard.follows_selection()
         && let Some((start, height)) = selected_lines
     {
-        scroll = scroll_for_selection(scroll, chunks[0].height, start, height).min(max_scroll);
+        scroll = scroll_for_selection(scroll, chunks[1].height, start, height).min(max_scroll);
     }
     for target in targets {
-        register_visible_target(mouse_layout, chunks[0], target, scroll);
+        register_visible_target(mouse_layout, chunks[1], target, scroll);
     }
+    frame.render_widget(
+        Paragraph::new(header_lines).style(theme::normal()),
+        chunks[0],
+    );
     frame.render_widget(
         Paragraph::new(lines)
             .style(theme::normal())
             .scroll((scroll, 0)),
-        chunks[0],
+        chunks[1],
     );
     frame.render_widget(
         Paragraph::new(dashboard_footer_lines(app, width, scroll, max_scroll)),
-        chunks[1],
+        chunks[2],
     );
 
     if app.search_is_open() {

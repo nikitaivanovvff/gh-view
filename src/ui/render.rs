@@ -160,18 +160,26 @@ mod tests {
             app.scroll_dashboard_down();
         }
         let layout = draw_layout(&app, 100, 10);
+        assert_eq!(layout.target_at(Position::new(4, 0)), None);
         assert_eq!(
-            layout.target_at(Position::new(4, 0)),
-            Some(super::super::layout::MouseTarget::DashboardRow(2))
-        );
-        assert_eq!(
-            layout.target_at(Position::new(4, 1)),
-            Some(super::super::layout::MouseTarget::DashboardRow(2))
-        );
-        assert_ne!(
             layout.target_at(Position::new(4, 2)),
-            Some(super::super::layout::MouseTarget::DashboardRow(2))
+            Some(super::super::layout::MouseTarget::DashboardSection(
+                DashboardSection::MyPrs
+            ))
         );
+        for row in 4..=5 {
+            assert_eq!(
+                layout.target_at(Position::new(4, row)),
+                Some(super::super::layout::MouseTarget::DashboardRow(4))
+            );
+        }
+        assert_eq!(
+            layout.target_at(Position::new(4, 6)),
+            Some(super::super::layout::MouseTarget::DashboardRow(5))
+        );
+        let text = draw_text(&app, 100, 10);
+        assert!(text.lines().next().unwrap().contains("GH-VIEW"));
+        assert!(text.lines().nth(2).unwrap().contains("MY PRS"));
     }
 
     #[test]
