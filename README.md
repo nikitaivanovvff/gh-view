@@ -181,9 +181,9 @@ The mock data includes several repositories, paginated repository groups, PR rev
 
 ### Mock design-audit fixtures
 
-Run `gh-view --mock`, then use these cases to inspect the remaining design-system gaps:
+Run `gh-view --mock`, then use these cases to inspect implemented edge-case behavior and the deferred detail-layout gap:
 
-| Gap | How to reproduce |
+| Case | How to inspect it |
 | --- | --- |
 | Selection and viewport coordination | Resize to roughly `80x12`, stay in My PRs, and press `j` repeatedly through the many `design-lab` repositories. Keyboard selection remains visible, while `↑ more`/`↓ more` in the footer indicates hidden content. Mouse-wheel scrolling can still browse away from selection. |
 | Repository identity | In My PRs, compare the adjacent `alpha/shared-ui` and `beta/shared-ui` groups. The full owner/repository labels keep them unambiguous. |
