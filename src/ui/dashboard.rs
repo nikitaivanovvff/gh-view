@@ -804,7 +804,7 @@ pub(super) fn reviewers_line(selected: bool, pr: &PullRequest, width: usize) -> 
     let mut entries = completed_reviewers
         .into_iter()
         .map(|reviewer| ReviewerEntry {
-            label: format!("{} @{}", reviewer_marker(reviewer.state), reviewer.login),
+            label: format!("@{}", reviewer.login),
             style: reviewer_style(reviewer.state),
         })
         .collect::<Vec<_>>();
@@ -817,8 +817,8 @@ pub(super) fn reviewers_line(selected: bool, pr: &PullRequest, width: usize) -> 
             crate::model::ReviewRequestTarget::Team(team) => format!("@{team}"),
         };
         ReviewerEntry {
-            label: format!("? {identity}"),
-            style: theme::reviewer(),
+            label: identity,
+            style: reviewer_style(crate::model::ReviewerState::Requested),
         }
     }));
 
@@ -859,15 +859,6 @@ fn reviewer_priority(state: crate::model::ReviewerState) -> u8 {
         crate::model::ReviewerState::ChangesRequested => 1,
         crate::model::ReviewerState::Commented => 2,
         crate::model::ReviewerState::Requested => 3,
-    }
-}
-
-fn reviewer_marker(state: crate::model::ReviewerState) -> &'static str {
-    match state {
-        crate::model::ReviewerState::Approved => "✓",
-        crate::model::ReviewerState::ChangesRequested => "!",
-        crate::model::ReviewerState::Commented => "·",
-        crate::model::ReviewerState::Requested => "?",
     }
 }
 
@@ -976,19 +967,56 @@ mod tests {
                 login: "carol".to_owned(),
                 state: ReviewerState::Requested,
             },
+            crate::model::Reviewer {
+                login: "dave".to_owned(),
+                state: ReviewerState::Commented,
+            },
         ];
         pr.review_requested = vec![crate::model::ReviewRequestTarget::User("carol".to_owned())];
 
-        let line = reviewers_line(false, &pr, 80).to_string();
+        let line = reviewers_line(false, &pr, 80);
+        let text = line.to_string();
 
-        assert!(line.contains("@alice"));
-        assert!(line.contains("@bob"));
-        assert!(line.contains("@carol"));
-        assert!(line.contains("✓ @alice"));
-        assert!(line.contains("! @bob"));
-        assert!(line.contains("? @carol"));
-        assert!(line.find("@alice").unwrap() < line.find("@bob").unwrap());
-        assert!(!line.contains("you"));
+        assert!(text.contains("@alice"));
+        assert!(text.contains("@bob"));
+        assert!(text.contains("@carol"));
+        assert!(text.contains("@dave"));
+        assert!(text.find("@alice").unwrap() < text.find("@bob").unwrap());
+        assert!(text.find("@bob").unwrap() < text.find("@dave").unwrap());
+        assert!(text.find("@dave").unwrap() < text.find("@carol").unwrap());
+        assert!(!text.contains("you"));
+        assert_eq!(
+            line.spans
+                .iter()
+                .find(|span| span.content == "@alice")
+                .unwrap()
+                .style,
+            theme::success()
+        );
+        assert_eq!(
+            line.spans
+                .iter()
+                .find(|span| span.content == "@bob")
+                .unwrap()
+                .style,
+            theme::warning()
+        );
+        assert_eq!(
+            line.spans
+                .iter()
+                .find(|span| span.content == "@carol")
+                .unwrap()
+                .style,
+            theme::info()
+        );
+        assert_eq!(
+            line.spans
+                .iter()
+                .find(|span| span.content == "@dave")
+                .unwrap()
+                .style,
+            theme::muted()
+        );
     }
 
     #[test]
@@ -1001,7 +1029,6 @@ mod tests {
         let line = reviewers_line(false, &pr, 80).to_string();
 
         assert!(line.contains("@owner/core-team"));
-        assert!(line.contains("? @owner/core-team"));
         assert!(!line.contains("no reviewers"));
     }
 
@@ -1025,7 +1052,7 @@ mod tests {
 
         let line = reviewers_line(false, &pr, 36).to_string();
 
-        assert!(line.contains("✓ @approved-reviewer"));
+        assert!(line.contains("@approved-reviewer"));
         assert!(line.contains("+2"));
         assert!(display_width(&line) <= 36);
     }

@@ -187,7 +187,7 @@ Run `gh-view --mock`, then use these cases to inspect implemented edge-case beha
 | --- | --- |
 | Selection and viewport coordination | Resize to roughly `80x12`, stay in My PRs, and press `j` repeatedly through the many `design-lab` repositories. Keyboard selection remains visible, while `↑ more`/`↓ more` in the footer indicates hidden content. Mouse-wheel scrolling can still browse away from selection. |
 | Repository identity | In My PRs, compare the adjacent `alpha/shared-ui` and `beta/shared-ui` groups. The full owner/repository labels keep them unambiguous. |
-| Reviewer outcome notation | Search for `reviewer notation`, open its repository group if needed, and compare the mixed outcomes: `✓` approved, `!` changes requested, `·` commented, and `?` requested. Narrow widths summarize omitted identities as `+N`. |
+| Reviewer outcome colors | Search for `reviewer notation`, open its repository group if needed, and compare the approved, changes-requested, commented, and requested identities. They use success, warning, muted, and info colors respectively; narrow widths summarize omitted identities as `+N`. |
 | Detail metadata pressure | Search for `metadata pressure`, open PR `#903`, and inspect it around 80 columns. Its long author, branches, title, reviewer, and unbroken body token expose clipping and wrapping priorities. |
 | Fuzzy-match explanation | Search for `needle-reviewer` or `match-only-author-needle`. PR `#904` explains the hidden source as `reviewer @needle-reviewer-hidden-from-search-results` or `author @match-only-author-needle`. |
 

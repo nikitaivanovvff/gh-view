@@ -9,7 +9,7 @@ The system is intentionally small. It is a set of shared decisions, not a compon
 1. **Terminal native.** Use a flat, full-screen layout, quiet rules, whitespace, and indentation. Boxes are reserved for modal overlays, not ordinary page structure.
 2. **Simple before dense.** Show the information needed to choose the next action. Remove secondary metadata before compressing essential content into noise.
 3. **Predictable hierarchy.** The same kind of information appears in the same order, notation, and style across views.
-4. **Readable without color.** Text, position, symbols, and modifiers communicate meaning. Color reinforces meaning but never supplies the only cue for important state.
+4. **Readable without color.** Text, position, symbols, and modifiers communicate aggregate and actionable state. Color reinforces meaning; individual reviewer outcomes are the documented compact exception.
 5. **Stable under pressure.** Long GitHub data and small terminals degrade deliberately. User-controlled text must not displace essential navigation or status.
 6. **Contextual interaction.** Show controls only when they can act on the current view or selection.
 7. **Small implementation surface.** Prefer formatting helpers and explicit width budgets over a general widget or token framework.
@@ -213,7 +213,7 @@ This inventory names recurring presentations without requiring component objects
 | Secondary filter | `all [7]   direct [6]   team [2]` | Lowercase, muted, active emphasis; compact active fallback on narrow widths |
 | Repository row | `▾ owner/repo   [6 PRs]   page 1/2` | Bold repository, bracketed quantity, fractional page position |
 | PR row | `needs review  #42 Fix parser   !12d   ci×` | Three-line compact unit; title truncates; age/CI align when present |
-| Identity list | `requested: @octocat, @owner/core` | Every user/team prefixed with `@`; state needs a no-color cue |
+| Identity list | `@octocat  @owner/core` | Every user/team is prefixed with `@`; outcome uses semantic color and approved-first ordering |
 | Section header | `DESCRIPTION`, `DISCUSSION  1/4` | Uppercase label; navigation fraction remains unbracketed |
 | Footer | `q quit   j/k move   / search` | Lowercase, muted, prioritized whole controls |
 | Search overlay | `Search PRs  / parser` | Modal focus border, visible query, bounded result rows and footer |
@@ -250,7 +250,7 @@ This inventory names recurring presentations without requiring component objects
 ## Accessibility And No-Color Requirements
 
 - Selection, focus, stale age, CI state, diff kind, and resolution must each have a text, symbol, or structural cue.
-- Reviewer outcomes currently need explicit no-color notation; color alone is insufficient.
+- Individual reviewer outcomes are the deliberate color-only exception: approved uses `success`, changes requested uses `warning`, requested uses `info`, and commented uses `muted`. The aggregate PR review status remains textual and understandable without color.
 - Instructions and errors may not use a low-contrast decorative role.
 - Validate dark and light palettes independently, including text rendered on selection backgrounds.
 - Use Unicode display-cell width for fitting. Do not assume one Rust `char` equals one terminal cell.

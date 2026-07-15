@@ -26,7 +26,7 @@ pub(super) fn reviewer_style(state: ReviewerState) -> Style {
         ReviewerState::Approved => theme::success(),
         ReviewerState::ChangesRequested => theme::warning(),
         ReviewerState::Requested => theme::info(),
-        ReviewerState::Commented => theme::muted_key(),
+        ReviewerState::Commented => theme::muted(),
     }
 }
 
