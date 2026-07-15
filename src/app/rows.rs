@@ -12,7 +12,6 @@ pub enum DashboardSection {
 
 #[derive(Clone, Debug)]
 pub enum Row<'a> {
-    Section,
     Group {
         section: DashboardSection,
         repo: &'a str,

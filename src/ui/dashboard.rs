@@ -117,7 +117,6 @@ pub(super) fn render_dashboard(
     for (index, row) in rows.iter().enumerate() {
         let line_start = lines.len();
         match row {
-            Row::Section => continue,
             Row::Group {
                 repo,
                 count,
@@ -332,14 +331,18 @@ fn render_search_overlay(
     }
 
     lines.push(rule_line(inner_width));
-    lines.push(Line::from(vec![
-        Span::styled("enter", theme::muted_key()),
-        Span::styled(" open  ", theme::muted()),
-        Span::styled("esc", theme::muted_key()),
-        Span::styled(" close  ", theme::muted()),
-        Span::styled("↑/↓ ctrl-p/n", theme::muted_key()),
-        Span::styled(" move", theme::muted()),
-    ]));
+    lines.push(
+        footer_lines(
+            inner_width,
+            vec![
+                FooterItem::new("enter", "open"),
+                FooterItem::new("esc", "close"),
+                FooterItem::new("↑/↓", "move"),
+            ],
+        )
+        .pop()
+        .expect("footer always contains a controls line"),
+    );
 
     frame.render_widget(Clear, popup);
     frame.render_widget(
@@ -382,7 +385,13 @@ fn search_match_line(
             status_style(&status),
         )
     };
-    let right_width = display_width(&right).min(width.saturating_sub(4));
+    let right = truncate(&right, (width / 3).max(1));
+    let right_width = display_width(&right);
+    let branch = if width >= 48 {
+        truncate(&branch, (width / 4).min(24))
+    } else {
+        String::new()
+    };
     let branch_width = if branch.is_empty() {
         0
     } else {
@@ -1133,6 +1142,19 @@ mod tests {
 
         assert!(line.contains("reviewer @needle-reviewer"));
         assert!(!line.contains("branch:"));
+    }
+
+    #[test]
+    fn search_results_stay_within_narrow_popup_width() {
+        let mut item = DashboardSearchMatch {
+            pr: pr(),
+            sections: vec![DashboardSection::MyPrs, DashboardSection::AwaitingReview],
+            match_reason: None,
+        };
+        item.pr.title = "A title that is much too long for the popup".to_owned();
+        item.pr.head_ref = "feature/a-very-long-branch-name".to_owned();
+
+        assert!(display_width(&search_match_line(false, &item, 36, false).to_string()) <= 36);
     }
 
     fn pr() -> PullRequest {

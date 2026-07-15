@@ -139,10 +139,7 @@ pub(super) fn handle_event(
             KeyCode::Char('2') => app.show_dashboard_section(DashboardSection::AwaitingReview),
             KeyCode::Tab => app.cycle_dashboard_section(),
             KeyCode::Char('f') => app.cycle_review_scope(),
-            KeyCode::Char('/') => {
-                app.open_search();
-                true
-            }
+            KeyCode::Char('/') => app.open_search(),
             KeyCode::Char('t') => {
                 app.open_theme_picker();
                 true
@@ -373,7 +370,7 @@ fn mock_error_mode_for_key(key: char) -> Option<Option<MockErrorMode>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{DetailPane, DetailStatus};
+    use crate::app::{AppStatus, DetailPane, DetailStatus};
     use crate::github::{GhStatus, MockErrorMode, MockGhClient, PullRequestSource};
     use crate::model::{PullRequest, PullRequestDetail};
     use crate::ui::render::render;
@@ -450,14 +447,14 @@ mod tests {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
-        assert_continue_changed(key(KeyCode::Char('j'), &mut app), true);
-        assert_eq!(app.dashboard.selected, 1);
-
         assert_continue_changed(key(KeyCode::Char('o'), &mut app), true);
         assert!(matches!(
-            app.rows().get(1),
+            app.rows().first(),
             Some(crate::app::Row::Group { open: false, .. })
         ));
+        assert_continue_changed(key(KeyCode::Char('o'), &mut app), true);
+        assert_continue_changed(key(KeyCode::Char('j'), &mut app), true);
+        assert_eq!(app.dashboard.selected, 1);
 
         assert_continue_changed(key(KeyCode::Char('k'), &mut app), true);
         assert_eq!(app.dashboard.selected, 0);
@@ -532,6 +529,20 @@ mod tests {
     }
 
     #[test]
+    fn search_does_not_open_behind_startup_screens() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.dashboard.loading = true;
+
+        assert_continue_changed(key(KeyCode::Char('/'), &mut app), false);
+        assert!(!app.search_is_open());
+
+        app.dashboard.loading = false;
+        app.status = AppStatus::Error("failed".to_owned());
+        assert_continue_changed(key(KeyCode::Char('/'), &mut app), false);
+        assert!(!app.search_is_open());
+    }
+
+    #[test]
     fn dashboard_mouse_selects_first_and_activates_selected_pr() {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
@@ -599,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_mouse_second_click_on_group_toggles_collapse() {
+    fn clicking_the_selected_dashboard_group_toggles_collapse() {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
@@ -609,7 +620,7 @@ mod tests {
         );
         assert!(matches!(
             app.rows().get(app.dashboard.selected),
-            Some(crate::app::Row::Group { open: true, .. })
+            Some(crate::app::Row::Group { open: false, .. })
         ));
 
         assert_continue_changed(
@@ -618,7 +629,7 @@ mod tests {
         );
         assert!(matches!(
             app.rows().get(app.dashboard.selected),
-            Some(crate::app::Row::Group { open: false, .. })
+            Some(crate::app::Row::Group { open: true, .. })
         ));
     }
 

@@ -138,7 +138,7 @@ Dashboard rows use select-first mouse behavior. Click a row to select it, then c
 
 After the initial load, refreshing keeps the current rows visible and shows progress in the header. If refresh fails, the existing rows remain available with a concise retry message.
 
-The theme picker supports `j`/`k`, arrow keys, the mouse wheel, and clicking a theme for a live preview. Press `enter` to save the selected theme to `[ui].theme`; `esc` cancels the preview and restores the previous theme.
+The theme picker supports `j`/`k`, arrow keys, the mouse wheel, and clicking a theme for a live preview. Press `enter` to save the selected theme to `[ui].theme`; `q` or `esc` cancels the preview and restores the previous theme.
 
 Preset colors are adapted from the official [Catppuccin](https://catppuccin.com/palette/), [Tokyo Night](https://github.com/folke/tokyonight.nvim), [Rosé Pine](https://rosepinetheme.com/palette/ingredients/), [Gruvbox](https://github.com/morhetz/gruvbox), [Solarized](https://ethanschoonover.com/solarized/), and [GitHub Primer](https://primer.style/primitives/colors) palettes.
 
@@ -181,6 +181,8 @@ gh-view --mock
 ```
 
 The mock data includes several repositories, paginated repository groups, PR review states, CI states, review-thread comments, replies, code context, and deliberately difficult design-audit fixtures.
+
+In mock mode, `F1` opens dashboard-state controls. Press `0` for the ready state, `5` for a GitHub outage, `6` for a timeout, `7` for a generic error, or `8` for an authentication error. `F1`, `q`, or `esc` closes the popup.
 
 ### Mock design-audit fixtures
 

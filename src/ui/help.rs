@@ -44,7 +44,7 @@ pub(super) fn render_help(frame: &mut ratatui::Frame<'_>, app: &App) {
         width,
         height,
     );
-    let inner_width = popup.width.saturating_sub(4) as usize;
+    let inner_width = popup.width.saturating_sub(2) as usize;
     let key_width = shortcuts
         .iter()
         .map(|(key, _)| key.len())

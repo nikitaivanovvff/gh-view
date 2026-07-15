@@ -104,7 +104,6 @@ impl DashboardState {
         section: DashboardSection,
         page_size: usize,
     ) {
-        rows.push(Row::Section);
         let shown = match section {
             DashboardSection::MyPrs => push_groups(
                 rows,

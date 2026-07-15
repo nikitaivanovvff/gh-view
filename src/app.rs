@@ -198,8 +198,12 @@ impl App {
             .cycle_review_scope(&self.status, &self.config.dashboard)
     }
 
-    pub fn open_search(&mut self) {
+    pub fn open_search(&mut self) -> bool {
+        if self.show_dashboard_loading_screen() || self.dashboard_error_page().is_some() {
+            return false;
+        }
         self.dashboard.open_search();
+        true
     }
 
     pub fn open_theme_picker(&mut self) {
@@ -788,7 +792,6 @@ mod tests {
     fn refresh_failure_preserves_loaded_dashboard_state() {
         let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
-        app.next();
         app.toggle_selected_group();
         app.open_search();
         app.push_search_char('1');
@@ -824,7 +827,7 @@ mod tests {
         app.refresh();
 
         assert_eq!(app.dashboard.active_section(), DashboardSection::MyPrs);
-        assert!(matches!(app.rows().first(), Some(Row::Section)));
+        assert!(matches!(app.rows().first(), Some(Row::Group { .. })));
         assert!(
             app.rows()
                 .iter()
@@ -837,7 +840,7 @@ mod tests {
         );
 
         assert!(app.show_dashboard_section(DashboardSection::AwaitingReview));
-        assert!(matches!(app.rows().first(), Some(Row::Section)));
+        assert!(matches!(app.rows().first(), Some(Row::Group { .. })));
         assert!(
             app.rows()
                 .iter()
@@ -1107,12 +1110,11 @@ mod tests {
         let mut app = App::with_default_config(Box::new(source));
         app.refresh();
 
-        app.next();
         app.toggle_selected_group();
 
         let rows = app.rows();
         assert!(matches!(
-            rows.get(1),
+            rows.first(),
             Some(Row::Group {
                 repo: "owner/shared",
                 open: false,
@@ -1123,7 +1125,7 @@ mod tests {
         app.show_dashboard_section(DashboardSection::AwaitingReview);
         let rows = app.rows();
         assert!(matches!(
-            rows.get(1),
+            rows.first(),
             Some(Row::Group {
                 repo: "owner/shared",
                 open: true,
@@ -1133,7 +1135,7 @@ mod tests {
 
         app.show_dashboard_section(DashboardSection::MyPrs);
         assert!(matches!(
-            app.rows().get(1),
+            app.rows().first(),
             Some(Row::Group { open: false, .. })
         ));
     }
@@ -1146,15 +1148,15 @@ mod tests {
         let expanded_count = app.rows().len();
         app.next();
         assert_eq!(app.dashboard.selected, 1);
+        app.previous();
+        assert_eq!(app.dashboard.selected, 0);
         app.toggle_selected_group();
 
         assert!(app.rows().len() < expanded_count);
         assert!(matches!(
-            app.rows().get(1),
+            app.rows().first(),
             Some(Row::Group { open: false, .. })
         ));
-        app.previous();
-        assert_eq!(app.dashboard.selected, 0);
     }
 
     #[test]
@@ -1218,7 +1220,6 @@ mod tests {
     fn search_returns_loaded_prs_even_when_group_is_collapsed() {
         let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
-        app.next();
         app.toggle_selected_group();
 
         assert!(

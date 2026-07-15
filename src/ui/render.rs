@@ -155,12 +155,12 @@ mod tests {
         );
         assert_eq!(
             layout.target_at(Position::new(4, 4)),
-            Some(super::super::layout::MouseTarget::DashboardRow(1))
+            Some(super::super::layout::MouseTarget::DashboardRow(0))
         );
         for row in 5..=7 {
             assert_eq!(
                 layout.target_at(Position::new(4, row)),
-                Some(super::super::layout::MouseTarget::DashboardRow(2))
+                Some(super::super::layout::MouseTarget::DashboardRow(1))
             );
         }
         assert_eq!(layout.target_at(Position::new(4, 28)), None);
@@ -179,12 +179,12 @@ mod tests {
         for row in 4..=5 {
             assert_eq!(
                 layout.target_at(Position::new(4, row)),
-                Some(super::super::layout::MouseTarget::DashboardRow(4))
+                Some(super::super::layout::MouseTarget::DashboardRow(3))
             );
         }
         assert_eq!(
             layout.target_at(Position::new(4, 6)),
-            Some(super::super::layout::MouseTarget::DashboardRow(5))
+            Some(super::super::layout::MouseTarget::DashboardRow(4))
         );
         let text = draw_text(&app, 100, 10);
         assert!(text.lines().next().unwrap().contains("GH-VIEW"));
@@ -308,8 +308,12 @@ mod tests {
     fn representative_detail_layout_keeps_identity_and_essential_controls() {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
-        app.next();
-        app.next();
+        let pr_index = app
+            .rows()
+            .iter()
+            .position(|row| matches!(row, crate::app::Row::Pr(_)))
+            .unwrap();
+        app.select_dashboard_row(pr_index);
         app.open_selected_detail();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
@@ -412,7 +416,7 @@ mod tests {
 
         app.cancel_theme_picker();
         app.open_help();
-        assert!(draw_text(&app, 40, 18).contains("Need 40x19 for keyboard help"));
+        assert!(draw_text(&app, 47, 19).contains("Need 48x19 for keyboard help"));
         app.close_help();
         app.view = AppView::Detail;
         assert!(draw_text(&app, 40, 23).contains("Need 40x24 for PR detail"));
@@ -428,6 +432,7 @@ mod tests {
         assert!(dashboard.contains("copy selected branch"));
         assert!(dashboard.contains("toggle repository"));
         assert!(dashboard.contains("open mock debug"));
+        assert!(draw_text(&app, 48, 30).contains("change repository page"));
 
         app.close_help();
         app.view = AppView::Detail;
