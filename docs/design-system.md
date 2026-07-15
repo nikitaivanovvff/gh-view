@@ -384,7 +384,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: retain side-by-side discussion and code context at all widths.
 - Option B: stack code context below discussion.
 - Option C: hide code context below a breakpoint and expose a toggle.
-- **Recommendation:** Option B. It preserves information and avoids adding a mode, subject to a prototype confirming acceptable vertical navigation.
+- **Accepted:** Option B. Below 96 columns, discussion stacks above code context; wider detail views retain the side-by-side presentation.
 
 ### 11. Tiny-Terminal Policy
 

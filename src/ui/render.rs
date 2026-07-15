@@ -233,6 +233,26 @@ mod tests {
         assert!(text.contains("DESCRIPTION"));
         assert!(text.contains("esc/q back"));
         assert!(text.contains("b open PR"));
+        let discussion_row = text
+            .lines()
+            .position(|line| line.contains("DISCUSSION"))
+            .unwrap();
+        let code_row = text
+            .lines()
+            .position(|line| line.contains("CODE CONTEXT"))
+            .unwrap();
+        assert!(discussion_row < code_row);
+
+        let wide = draw_text(&app, 120, 24);
+        let discussion_row = wide
+            .lines()
+            .position(|line| line.contains("DISCUSSION"))
+            .unwrap();
+        let code_row = wide
+            .lines()
+            .position(|line| line.contains("CODE CONTEXT"))
+            .unwrap();
+        assert_eq!(discussion_row, code_row);
     }
 
     #[test]
