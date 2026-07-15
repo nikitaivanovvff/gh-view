@@ -304,7 +304,6 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 ### Remaining Gaps
 
 - Reviewer results still depend too heavily on color; long lists are bounded but do not summarize omitted identities.
-- Repository rows use the short repository name even when identical names from different owners need disambiguation.
 - Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
 - Search may hide the field that caused a fuzzy match.
 - Theme picker selection does not scroll independently if the theme list later grows beyond its minimum-height popup.
@@ -415,10 +414,9 @@ These decisions resolve the initial design audit. Options remain recorded to pre
 
 ### P2: Identity And Terminology
 
-1. Disambiguate repositories with identical short names from different owners.
-2. Keep filter-count terminology aligned with GitHub relationship semantics.
-3. Keep documented mouse behavior aligned with input tests.
-4. Keep browser destination labels explicit when adding future actions.
+1. Keep filter-count terminology aligned with GitHub relationship semantics.
+2. Keep documented mouse behavior aligned with input tests.
+3. Keep browser destination labels explicit when adding future actions.
 
 ### P3: Regression Coverage
 

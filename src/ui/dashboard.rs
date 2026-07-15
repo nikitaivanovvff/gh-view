@@ -658,10 +658,7 @@ pub(super) fn group_line(
 }
 
 fn repo_display_name(repo: &str) -> String {
-    repo.rsplit_once('/')
-        .map(|(_, name)| name)
-        .unwrap_or(repo)
-        .to_owned()
+    repo.to_owned()
 }
 
 pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'static> {
@@ -897,7 +894,7 @@ mod tests {
         let pr_line = pr_line(true, &pr, 80).to_string();
         let message = message_line(true, "No PRs", 80).to_string();
 
-        assert!(group.contains("repo"));
+        assert!(group.contains("owner/repo"));
         assert!(group.contains("2 PRs"));
         assert!(pr_line.contains("#1 Title"));
         assert!(pr_line.contains("no decision"));

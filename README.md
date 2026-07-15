@@ -186,7 +186,7 @@ Run `gh-view --mock`, then use these cases to inspect the remaining design-syste
 | Gap | How to reproduce |
 | --- | --- |
 | Selection and viewport coordination | Resize to roughly `80x12`, stay in My PRs, and press `j` repeatedly through the many `design-lab` repositories. Keyboard selection remains visible, while `↑ more`/`↓ more` in the footer indicates hidden content. Mouse-wheel scrolling can still browse away from selection. |
-| Repository owner ambiguity | In My PRs, compare the adjacent `alpha/shared-ui` and `beta/shared-ui` groups. Both group labels render as `shared-ui`. |
+| Repository identity | In My PRs, compare the adjacent `alpha/shared-ui` and `beta/shared-ui` groups. The full owner/repository labels keep them unambiguous. |
 | Reviewer states rely on color | Search for `reviewer notation`, open its repository group if needed, and compare the mixed reviewer outcomes. The row bounds the long list but does not label outcomes or summarize omitted identities. |
 | Detail metadata pressure | Search for `metadata pressure`, open PR `#903`, and inspect it around 80 columns. Its long author, branches, title, reviewer, and unbroken body token expose clipping and wrapping priorities. |
 | Hidden fuzzy-match source | Search for `needle-reviewer` or `match-only-author-needle`. PR `#904` matches, but the visible result does not show the author or reviewer that caused the match. |
