@@ -310,7 +310,6 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 - Search and theme picker need dedicated tiny-height behavior and list scrolling.
 - Selection and scroll can diverge, allowing keyboard selection to move outside the visible viewport.
 - Full-page errors can preserve decorative art while clipping remediation on short terminals.
-- Several palette roles, especially muted and light-theme semantic colors, need formal contrast validation.
 - There is no broad visual regression suite; current render tests focus mainly on mouse geometry.
 
 ## Open Questions
@@ -396,7 +395,7 @@ Each question requires an explicit product decision before a behavior-changing i
 
 - Option A: require 4.5:1 for all informational text and 3:1 for focus boundaries.
 - Option B: permit lower contrast for secondary text.
-- **Recommendation:** Option A. `muted` frequently carries controls and status, so treating it as decorative is unsafe. Quiet nonessential rules may remain exempt.
+- **Accepted:** Option A. Informational roles are validated at 4.5:1 and meaningful focus boundaries at 3:1 against page and applicable selection backgrounds; quiet nonessential rules remain exempt.
 
 ### 13. Error-Page Controls
 
