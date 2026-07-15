@@ -306,7 +306,7 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 - Reviewer results still depend too heavily on color; long lists are bounded but do not summarize omitted identities.
 - Repository rows use the short repository name even when identical names from different owners need disambiguation.
 - Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
-- Search may show the same PR once per dashboard section and may hide the field that caused a fuzzy match.
+- Search may hide the field that caused a fuzzy match.
 - Search and theme picker need dedicated tiny-height behavior and list scrolling.
 - Background refresh replaces loaded dashboard content; stale-data failure feedback is incomplete for some error classes.
 - Selection and scroll can diverge, allowing keyboard selection to move outside the visible viewport.
@@ -351,7 +351,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: preserve one result per section.
 - Option B: deduplicate by `owner/repo #number` and show all memberships.
 - Option C: search only the active view/filter.
-- **Recommendation:** Option B. Search remains global and useful for collapsed groups without presenting an identical PR twice.
+- **Accepted:** Option B. Global search deduplicates by `owner/repo #number` and displays every dashboard membership on the unified result.
 
 ### 6. Search Result Scope
 

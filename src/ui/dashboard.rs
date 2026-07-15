@@ -335,7 +335,13 @@ fn search_match_line(
     let status = pr_status(&item.pr);
     let left = format!("{} #{} {}", item.pr.repo, item.pr.number, item.pr.title);
     let branch = truncate(&branch_label(&item.pr.head_ref, nerd_fonts), 24);
-    let right = format!("{}  {}", status, item.section.title());
+    let memberships = item
+        .sections
+        .iter()
+        .map(|section| section.title())
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let right = format!("{status}  {memberships}");
     let right_width = right.chars().count().min(width.saturating_sub(4));
     let branch_width = if branch.is_empty() {
         0
@@ -931,6 +937,18 @@ mod tests {
                 ) <= width
             );
         }
+    }
+
+    #[test]
+    fn search_result_shows_all_dashboard_memberships() {
+        let item = DashboardSearchMatch {
+            pr: pr(),
+            sections: vec![DashboardSection::MyPrs, DashboardSection::AwaitingReview],
+        };
+
+        let line = search_match_line(false, &item, 120, false).to_string();
+
+        assert!(line.contains("My PRs + Review Requests"));
     }
 
     fn pr() -> PullRequest {

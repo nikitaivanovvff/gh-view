@@ -3,6 +3,7 @@ use super::rows::DashboardSection;
 use crate::model::{CheckStatus, Dashboard, PullRequest, RepoGroup};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DashboardSearchState {
@@ -13,12 +14,12 @@ pub struct DashboardSearchState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DashboardSearchMatch {
     pub pr: PullRequest,
-    pub section: DashboardSection,
+    pub sections: Vec<DashboardSection>,
 }
 
 struct SearchCandidate<'a> {
     pr: &'a PullRequest,
-    section: DashboardSection,
+    sections: Vec<DashboardSection>,
     text: String,
     order: usize,
 }
@@ -59,9 +60,16 @@ pub(super) fn search_matches(dashboard: &Dashboard, query: &str) -> Vec<Dashboar
 
 fn search_candidates(dashboard: &Dashboard) -> Vec<SearchCandidate<'_>> {
     let mut candidates = Vec::new();
-    push_section_candidates(&mut candidates, DashboardSection::MyPrs, &dashboard.my_prs);
+    let mut identities = HashMap::new();
     push_section_candidates(
         &mut candidates,
+        &mut identities,
+        DashboardSection::MyPrs,
+        &dashboard.my_prs,
+    );
+    push_section_candidates(
+        &mut candidates,
+        &mut identities,
         DashboardSection::AwaitingReview,
         &dashboard.awaiting_review,
     );
@@ -70,14 +78,26 @@ fn search_candidates(dashboard: &Dashboard) -> Vec<SearchCandidate<'_>> {
 
 fn push_section_candidates<'a>(
     candidates: &mut Vec<SearchCandidate<'a>>,
+    identities: &mut HashMap<(&'a str, u64), usize>,
     section: DashboardSection,
     groups: &'a [RepoGroup],
 ) {
     for group in groups {
         for pr in &group.prs {
+            let identity = (pr.repo.as_str(), pr.number);
+            if let Some(index) = identities.get(&identity).copied() {
+                let candidate = &mut candidates[index];
+                if !candidate.sections.contains(&section) {
+                    candidate.sections.push(section);
+                    candidate.text.push(' ');
+                    candidate.text.push_str(section.title());
+                }
+                continue;
+            }
+            identities.insert(identity, candidates.len());
             candidates.push(SearchCandidate {
                 pr,
-                section,
+                sections: vec![section],
                 text: candidate_text(section.title(), pr),
                 order: candidates.len(),
             });
@@ -114,7 +134,7 @@ impl SearchCandidate<'_> {
     fn into_match(self) -> DashboardSearchMatch {
         DashboardSearchMatch {
             pr: self.pr.clone(),
-            section: self.section,
+            sections: self.sections,
         }
     }
 }
@@ -135,9 +155,9 @@ mod tests {
 
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].pr.number, 1);
-        assert_eq!(matches[0].section, DashboardSection::MyPrs);
+        assert_eq!(matches[0].sections, vec![DashboardSection::MyPrs]);
         assert_eq!(matches[1].pr.number, 2);
-        assert_eq!(matches[1].section, DashboardSection::AwaitingReview);
+        assert_eq!(matches[1].sections, vec![DashboardSection::AwaitingReview]);
     }
 
     #[test]
@@ -191,6 +211,22 @@ mod tests {
                 .map(|item| item.pr.number),
             Some(1)
         );
+    }
+
+    #[test]
+    fn deduplicates_prs_across_sections_and_preserves_memberships() {
+        let shared = pr("owner/api", 1, "Add Retry", "alice");
+        let dashboard = Dashboard::from_prs(vec![shared.clone()], vec![shared]);
+
+        let matches = search_matches(&dashboard, "");
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matches[0].sections,
+            vec![DashboardSection::MyPrs, DashboardSection::AwaitingReview]
+        );
+        assert_eq!(search_matches(&dashboard, "my prs").len(), 1);
+        assert_eq!(search_matches(&dashboard, "review requests").len(), 1);
     }
 
     fn pr(repo: &str, number: u64, title: &str, author: &str) -> PullRequest {

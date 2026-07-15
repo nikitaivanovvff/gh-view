@@ -334,7 +334,9 @@ impl App {
             return;
         };
 
-        self.show_dashboard_section(item.section);
+        if let Some(section) = item.sections.first().copied() {
+            self.show_dashboard_section(section);
+        }
         self.dashboard.close_search();
         self.open_detail_for_pr(item.pr);
     }
