@@ -156,7 +156,9 @@ mod tests {
         }
         assert_eq!(layout.target_at(Position::new(4, 28)), None);
 
-        app.dashboard.scroll = 6;
+        for _ in 0..6 {
+            app.scroll_dashboard_down();
+        }
         let layout = draw_layout(&app, 100, 10);
         assert_eq!(
             layout.target_at(Position::new(4, 0)),
@@ -246,6 +248,30 @@ mod tests {
         assert!(text.contains("Refreshing PRs"));
         assert!(text.contains("#"));
         assert!(text.contains("MY PRS"));
+    }
+
+    #[test]
+    fn dashboard_follows_keyboard_selection_and_shows_overflow_hints() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+
+        let initial = draw_text(&app, 80, 10);
+        assert!(initial.contains("↓ more"));
+
+        for _ in 0..app.rows().len() {
+            app.next();
+        }
+        let selected_title = app
+            .rows()
+            .get(app.dashboard.selected)
+            .and_then(|row| match row {
+                crate::app::Row::Pr(pr) => Some(format!("#{}", pr.number)),
+                _ => None,
+            });
+        let rendered = draw_text(&app, 80, 10);
+
+        assert!(selected_title.is_some_and(|title| rendered.contains(&title)));
+        assert!(rendered.contains("↑ more"));
     }
 
     #[test]

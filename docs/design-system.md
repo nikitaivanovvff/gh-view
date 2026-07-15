@@ -308,7 +308,6 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 - Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
 - Search may hide the field that caused a fuzzy match.
 - Theme picker selection does not scroll independently if the theme list later grows beyond its minimum-height popup.
-- Selection and scroll can diverge, allowing keyboard selection to move outside the visible viewport.
 - There is no broad visual regression suite; current render tests focus mainly on mouse geometry.
 
 ## Accepted Decisions
@@ -406,8 +405,7 @@ These decisions resolve the initial design audit. Options remain recorded to pre
 
 ### P0: Correctness And Understandability
 
-1. Keep selected dashboard rows visible and clamp stored scroll after data, filter, page, and resize changes.
-2. Add no-color reviewer outcome notation and summarize omitted reviewer identities.
+1. Add no-color reviewer outcome notation and summarize omitted reviewer identities.
 
 ### P1: Responsive Consistency
 

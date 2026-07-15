@@ -47,6 +47,7 @@ pub struct DashboardState {
     pub(super) search: Option<DashboardSearchState>,
     pub loading: bool,
     has_loaded_once: bool,
+    follow_selection: bool,
     collapsed_groups: BTreeSet<String>,
     repo_pages: BTreeMap<String, usize>,
     pub(super) rx: Option<DashboardReceiver>,
@@ -71,6 +72,7 @@ impl DashboardState {
             search: None,
             loading: false,
             has_loaded_once: false,
+            follow_selection: true,
             collapsed_groups: BTreeSet::new(),
             repo_pages: BTreeMap::new(),
             rx: None,
@@ -269,25 +271,30 @@ impl DashboardState {
         self.selected = self
             .selected
             .min(self.rows(status, config).len().saturating_sub(1));
+        self.follow_selection = true;
     }
 
     pub fn next(&mut self, status: &AppStatus, config: &DashboardConfig) {
         let len = self.rows(status, config).len();
         if len > 0 {
             self.selected = (self.selected + 1).min(len - 1);
+            self.follow_selection = true;
         }
     }
 
     pub fn previous(&mut self) {
         self.selected = self.selected.saturating_sub(1);
+        self.follow_selection = true;
     }
 
     pub fn scroll_down(&mut self) {
         self.scroll = self.scroll.saturating_add(1);
+        self.follow_selection = false;
     }
 
     pub fn scroll_up(&mut self) {
         self.scroll = self.scroll.saturating_sub(1);
+        self.follow_selection = false;
     }
 
     pub fn select(&mut self, index: usize, status: &AppStatus, config: &DashboardConfig) {
@@ -400,6 +407,10 @@ impl DashboardState {
 
     pub fn show_loading_screen(&self) -> bool {
         self.loading && !self.has_loaded_once
+    }
+
+    pub(crate) fn follows_selection(&self) -> bool {
+        self.follow_selection
     }
 
     pub(super) fn has_loaded_once(&self) -> bool {

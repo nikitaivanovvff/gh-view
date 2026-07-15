@@ -45,6 +45,7 @@ pub(super) fn render_dashboard(
     let width = chunks[0].width as usize;
     let mut lines = Vec::new();
     let mut targets = Vec::new();
+    let mut selected_lines = None;
 
     let user = app
         .dashboard
@@ -78,6 +79,7 @@ pub(super) fn render_dashboard(
     lines.push(Line::from(header));
     lines.push(rule_line(width));
     for (index, row) in rows.iter().enumerate() {
+        let line_start = lines.len();
         match row {
             Row::Section => {
                 let line = lines.len();
@@ -141,12 +143,18 @@ pub(super) fn render_dashboard(
                 lines.push(message_line(index == selected, message, width));
             }
         }
+        if index == selected {
+            selected_lines = Some((line_start, lines.len().saturating_sub(line_start)));
+        }
     }
 
-    let scroll = app
-        .dashboard
-        .scroll
-        .min(max_scroll(lines.len(), chunks[0].height));
+    let max_scroll = max_scroll(lines.len(), chunks[0].height);
+    let mut scroll = app.dashboard.scroll.min(max_scroll);
+    if app.dashboard.follows_selection()
+        && let Some((start, height)) = selected_lines
+    {
+        scroll = scroll_for_selection(scroll, chunks[0].height, start, height).min(max_scroll);
+    }
     for target in targets {
         register_visible_target(mouse_layout, chunks[0], target, scroll);
     }
@@ -157,7 +165,7 @@ pub(super) fn render_dashboard(
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new(dashboard_footer_lines(app, width)),
+        Paragraph::new(dashboard_footer_lines(app, width, scroll, max_scroll)),
         chunks[1],
     );
 
@@ -168,6 +176,19 @@ pub(super) fn render_dashboard(
 
 fn max_scroll(line_count: usize, visible_height: u16) -> u16 {
     line_count.saturating_sub(visible_height as usize) as u16
+}
+
+fn scroll_for_selection(current: u16, visible_height: u16, start: usize, height: usize) -> u16 {
+    let current = usize::from(current);
+    let visible_height = usize::from(visible_height);
+    if start < current {
+        return start.min(u16::MAX as usize) as u16;
+    }
+    let end = start.saturating_add(height);
+    if end > current.saturating_add(visible_height) {
+        return end.saturating_sub(visible_height).min(u16::MAX as usize) as u16;
+    }
+    current.min(u16::MAX as usize) as u16
 }
 
 fn register_visible_target(
@@ -199,15 +220,25 @@ fn register_visible_target(
     }
 }
 
-fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+fn dashboard_footer_lines(
+    app: &App,
+    width: usize,
+    scroll: u16,
+    max_scroll: u16,
+) -> Vec<Line<'static>> {
     let rows = app.rows();
     let selected = rows.get(app.dashboard.selected);
-    let mut items = vec![
-        FooterItem::new("q", "quit"),
-        FooterItem::new("j/k", "move"),
+    let mut items = vec![FooterItem::new("q", "quit"), FooterItem::new("j/k", "move")];
+    match (scroll > 0, scroll < max_scroll) {
+        (true, true) => items.push(FooterItem::new("↑/↓", "more")),
+        (true, false) => items.push(FooterItem::new("↑", "more")),
+        (false, true) => items.push(FooterItem::new("↓", "more")),
+        (false, false) => {}
+    }
+    items.extend([
         FooterItem::new("tab", "view"),
         FooterItem::new("/", "search"),
-    ];
+    ]);
     if app.dashboard.active_section() == DashboardSection::AwaitingReview {
         items.push(FooterItem::new("f", "filter"));
     }
@@ -846,7 +877,7 @@ mod tests {
     #[test]
     fn mock_footer_links_to_debug_popup_without_listing_error_states() {
         let app = App::with_default_config(Box::new(MockGhClient::new()));
-        let footer = dashboard_footer_lines(&app, 500)
+        let footer = dashboard_footer_lines(&app, 500, 0, 1)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -973,6 +1004,13 @@ mod tests {
                 ) <= width
             );
         }
+    }
+
+    #[test]
+    fn selection_scroll_reveals_complete_rows_only_when_needed() {
+        assert_eq!(scroll_for_selection(0, 8, 7, 3), 2);
+        assert_eq!(scroll_for_selection(5, 8, 3, 1), 3);
+        assert_eq!(scroll_for_selection(2, 8, 3, 3), 2);
     }
 
     #[test]
