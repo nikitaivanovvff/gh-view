@@ -371,4 +371,22 @@ mod tests {
         app.view = AppView::Detail;
         assert!(draw_text(&app, 40, 23).contains("Need 40x24 for PR detail"));
     }
+
+    #[test]
+    fn dashboard_error_keeps_recovery_footer_and_exact_retry_geometry() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.status = crate::app::AppStatus::Error("failed".to_owned());
+
+        let text = draw_text(&app, 40, 10);
+        let layout = draw_layout(&app, 40, 10);
+
+        assert!(text.contains("Could not load pull requests"));
+        assert!(text.contains("r retry   q quit"));
+        assert_eq!(
+            layout.target_at(Position::new(0, 9)),
+            Some(super::super::layout::MouseTarget::DashboardRetry)
+        );
+        assert_eq!(layout.target_at(Position::new(7, 9)), None);
+        assert_eq!(layout.target_at(Position::new(0, 8)), None);
+    }
 }

@@ -282,6 +282,10 @@ fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App, target: Option<Mouse
             true
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            if target == Some(MouseTarget::DashboardRetry) {
+                app.refresh_async();
+                return true;
+            }
             if let Some(MouseTarget::DashboardSection(section)) = target {
                 return app.show_dashboard_section(section);
             }

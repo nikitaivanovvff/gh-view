@@ -309,7 +309,6 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 - Search may hide the field that caused a fuzzy match.
 - Search and theme picker need dedicated tiny-height behavior and list scrolling.
 - Selection and scroll can diverge, allowing keyboard selection to move outside the visible viewport.
-- Full-page errors can preserve decorative art while clipping remediation on short terminals.
 - There is no broad visual regression suite; current render tests focus mainly on mouse geometry.
 
 ## Open Questions
@@ -401,7 +400,7 @@ Each question requires an explicit product decision before a behavior-changing i
 
 - Option A: instructions in the error body are sufficient.
 - Option B: retain a minimal `r retry   q quit` footer and mouse retry target.
-- **Recommendation:** Option B. Recovery controls should remain stable across normal and error states.
+- **Accepted:** Option B. Full-page errors retain an `r retry   q quit` footer with an exact mouse retry target, and decorative art is omitted before remediation when height is constrained.
 
 ## Implementation Roadmap
 

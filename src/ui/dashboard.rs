@@ -30,7 +30,7 @@ pub(super) fn render_dashboard(
     }
 
     if let Some(error_page) = app.dashboard_error_page() {
-        render_dashboard_error(frame, &error_page);
+        render_dashboard_error(frame, &error_page, mouse_layout);
         return;
     }
 
@@ -391,35 +391,49 @@ fn branch_label(head_ref: &str, nerd_fonts: bool) -> String {
     }
 }
 
-fn render_dashboard_error(frame: &mut ratatui::Frame<'_>, page: &DashboardErrorPage) {
+fn render_dashboard_error(
+    frame: &mut ratatui::Frame<'_>,
+    page: &DashboardErrorPage,
+    mouse_layout: &mut MouseLayout,
+) {
     let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .split(area);
     let mut lines = Vec::new();
-    for art_line in &page.art {
-        lines.push(Line::styled(art_line.clone(), theme::muted()));
+    let art_height = page.art.len() + usize::from(!page.art.is_empty() && !page.lines.is_empty());
+    if art_height + page.lines.len() <= chunks[0].height as usize {
+        for art_line in &page.art {
+            lines.push(Line::styled(art_line.clone(), theme::muted()));
+        }
+        if !page.art.is_empty() && !page.lines.is_empty() {
+            lines.push(Line::raw(""));
+        }
     }
-    if !page.art.is_empty() && !page.lines.is_empty() {
-        lines.push(Line::raw(""));
-    }
-    for line in &page.lines {
+    for (index, line) in page.lines.iter().enumerate() {
         lines.push(match line {
-            DashboardErrorLine::Text(text) => Line::styled(text.clone(), theme::muted()),
+            DashboardErrorLine::Text(text) if index == 0 => {
+                Line::styled(text.clone(), theme::danger().add_modifier(Modifier::BOLD))
+            }
+            DashboardErrorLine::Text(text) => Line::styled(text.clone(), theme::normal()),
             DashboardErrorLine::StatusPage => Line::from(vec![
-                Span::styled("Check ", theme::muted()),
+                Span::styled("Check ", theme::normal()),
                 Span::styled(
                     "https://www.githubstatus.com/",
                     theme::accent().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" and press r to retry.", theme::muted()),
+                Span::styled(" and press r to retry.", theme::normal()),
             ]),
         });
     }
 
-    let height = lines.len().min(area.height as usize) as u16;
-    let top = area.y + area.height.saturating_sub(height) / 2;
+    let height = lines.len().min(chunks[0].height as usize) as u16;
+    let top = chunks[0].y + chunks[0].height.saturating_sub(height) / 2;
     let centered = Rect {
-        x: area.x,
+        x: chunks[0].x,
         y: top,
-        width: area.width,
+        width: chunks[0].width,
         height,
     };
     frame.render_widget(
@@ -428,6 +442,19 @@ fn render_dashboard_error(frame: &mut ratatui::Frame<'_>, page: &DashboardErrorP
             .alignment(Alignment::Center),
         centered,
     );
+    frame.render_widget(
+        Paragraph::new(footer_lines(
+            area.width as usize,
+            vec![FooterItem::new("r", "retry"), FooterItem::new("q", "quit")],
+        )),
+        chunks[1],
+    );
+    if chunks[1].height >= 2 {
+        mouse_layout.push(
+            Rect::new(chunks[1].x, chunks[1].y + 1, 7.min(chunks[1].width), 1),
+            MouseTarget::DashboardRetry,
+        );
+    }
 }
 
 fn render_dashboard_loading(frame: &mut ratatui::Frame<'_>, loading_frame: usize) {

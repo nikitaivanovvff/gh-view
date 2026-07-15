@@ -15,6 +15,7 @@ pub(super) enum MouseTarget {
     DetailPane(DetailPane),
     SearchMatch(usize),
     Theme(usize),
+    DashboardRetry,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
