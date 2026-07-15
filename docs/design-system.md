@@ -304,7 +304,6 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 ### Remaining Gaps
 
 - Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
-- Search may hide the field that caused a fuzzy match.
 - Theme picker selection does not scroll independently if the theme list later grows beyond its minimum-height popup.
 - There is no broad visual regression suite; current render tests focus mainly on mouse geometry.
 
@@ -405,7 +404,7 @@ These decisions resolve the initial design audit. Options remain recorded to pre
 
 1. Give detail metadata explicit field priorities and display-cell budgets.
 2. Add theme-picker list scrolling if the available theme list outgrows the minimum popup.
-3. Make search query tail/cursor visible and show why a result matched.
+3. Keep the tail/cursor of long search queries visible.
 
 ### P2: Identity And Terminology
 

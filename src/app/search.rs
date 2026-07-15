@@ -15,6 +15,13 @@ pub struct DashboardSearchState {
 pub struct DashboardSearchMatch {
     pub pr: PullRequest,
     pub sections: Vec<DashboardSection>,
+    pub match_reason: Option<SearchMatchReason>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchMatchReason {
+    pub label: &'static str,
+    pub value: String,
 }
 
 struct SearchCandidate<'a> {
@@ -31,7 +38,7 @@ pub(super) fn search_matches(dashboard: &Dashboard, query: &str) -> Vec<Dashboar
     if query.is_empty() {
         return candidates
             .into_iter()
-            .map(SearchCandidate::into_match)
+            .map(|candidate| candidate.into_match(None))
             .collect();
     }
 
@@ -47,14 +54,15 @@ pub(super) fn search_matches(dashboard: &Dashboard, query: &str) -> Vec<Dashboar
                 &mut matcher,
             )?;
             haystack.clear();
-            Some((score, candidate.order, candidate))
+            let reason = best_match_reason(&pattern, &candidate, &mut matcher, &mut haystack);
+            Some((score, candidate.order, candidate, reason))
         })
         .collect::<Vec<_>>();
 
     scored.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
     scored
         .into_iter()
-        .map(|(_, _, candidate)| candidate.into_match())
+        .map(|(_, _, candidate, reason)| candidate.into_match(reason))
         .collect()
 }
 
@@ -130,11 +138,99 @@ fn candidate_text(section: &str, pr: &PullRequest) -> String {
     )
 }
 
+fn best_match_reason(
+    pattern: &Pattern,
+    candidate: &SearchCandidate<'_>,
+    matcher: &mut Matcher,
+    haystack: &mut Vec<char>,
+) -> Option<SearchMatchReason> {
+    search_fields(candidate)
+        .into_iter()
+        .filter_map(|field| {
+            let score = pattern.score(Utf32Str::new(&field.value, haystack), matcher);
+            haystack.clear();
+            score.map(|score| (score, field))
+        })
+        .max_by_key(|(score, _)| *score)
+        .and_then(|(_, field)| {
+            (!field.visible).then_some(SearchMatchReason {
+                label: field.label,
+                value: field.value,
+            })
+        })
+}
+
+struct SearchField {
+    label: &'static str,
+    value: String,
+    visible: bool,
+}
+
+fn search_fields(candidate: &SearchCandidate<'_>) -> Vec<SearchField> {
+    let pr = candidate.pr;
+    let mut fields = vec![
+        SearchField {
+            label: "repository",
+            value: pr.repo.clone(),
+            visible: true,
+        },
+        SearchField {
+            label: "number",
+            value: format!("#{}", pr.number),
+            visible: true,
+        },
+        SearchField {
+            label: "title",
+            value: pr.title.clone(),
+            visible: true,
+        },
+        SearchField {
+            label: "branch",
+            value: pr.head_ref.clone(),
+            visible: true,
+        },
+        SearchField {
+            label: "author",
+            value: format!("@{}", pr.author),
+            visible: false,
+        },
+        SearchField {
+            label: "status",
+            value: pull_request_status(pr),
+            visible: true,
+        },
+    ];
+    if let Some(status) = pr.check_status.as_ref() {
+        fields.push(SearchField {
+            label: "CI",
+            value: status.label().to_owned(),
+            visible: false,
+        });
+    }
+    fields.extend(pr.reviewers.iter().map(|reviewer| SearchField {
+        label: "reviewer",
+        value: format!("@{}", reviewer.login),
+        visible: false,
+    }));
+    fields.extend(pr.review_requested.iter().map(|target| SearchField {
+        label: "requested",
+        value: format!("@{}", target.name()),
+        visible: false,
+    }));
+    fields.extend(candidate.sections.iter().map(|section| SearchField {
+        label: "section",
+        value: section.title().to_owned(),
+        visible: true,
+    }));
+    fields
+}
+
 impl SearchCandidate<'_> {
-    fn into_match(self) -> DashboardSearchMatch {
+    fn into_match(self, match_reason: Option<SearchMatchReason>) -> DashboardSearchMatch {
         DashboardSearchMatch {
             pr: self.pr.clone(),
             sections: self.sections,
+            match_reason,
         }
     }
 }
@@ -156,6 +252,7 @@ mod tests {
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].pr.number, 1);
         assert_eq!(matches[0].sections, vec![DashboardSection::MyPrs]);
+        assert_eq!(matches[0].match_reason, None);
         assert_eq!(matches[1].pr.number, 2);
         assert_eq!(matches[1].sections, vec![DashboardSection::AwaitingReview]);
     }
@@ -191,6 +288,35 @@ mod tests {
                 "{query}"
             );
         }
+    }
+
+    #[test]
+    fn hidden_search_fields_explain_why_a_pr_matched() {
+        let mut item = pr("owner/api", 42, "Visible title", "hidden-author");
+        item.reviewers = vec![Reviewer {
+            login: "needle-reviewer".to_owned(),
+            state: ReviewerState::Commented,
+        }];
+        let dashboard = Dashboard::from_prs(vec![item], vec![]);
+
+        let author = &search_matches(&dashboard, "hidden-author")[0];
+        assert_eq!(author.match_reason.as_ref().unwrap().label, "author");
+        assert_eq!(
+            author.match_reason.as_ref().unwrap().value,
+            "@hidden-author"
+        );
+
+        let reviewer = &search_matches(&dashboard, "needle-reviewer")[0];
+        assert_eq!(reviewer.match_reason.as_ref().unwrap().label, "reviewer");
+        assert_eq!(
+            reviewer.match_reason.as_ref().unwrap().value,
+            "@needle-reviewer"
+        );
+
+        assert_eq!(
+            search_matches(&dashboard, "Visible title")[0].match_reason,
+            None
+        );
     }
 
     #[test]

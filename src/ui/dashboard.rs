@@ -374,24 +374,35 @@ fn search_match_line(
     let gutter = if selected { "▸" } else { " " };
     let status = pr_status(&item.pr);
     let left = format!("{} #{} {}", item.pr.repo, item.pr.number, item.pr.title);
-    let branch = truncate(&branch_label(&item.pr.head_ref, nerd_fonts), 24);
     let memberships = item
         .sections
         .iter()
         .map(|section| section.title())
         .collect::<Vec<_>>()
         .join(" + ");
-    let right = format!("{status}  {memberships}");
-    let right_width = right.chars().count().min(width.saturating_sub(4));
+    let (branch, right, right_style) = if let Some(reason) = &item.match_reason {
+        (
+            String::new(),
+            format!("{} {}", reason.label, reason.value),
+            theme::muted_key(),
+        )
+    } else {
+        (
+            truncate(&branch_label(&item.pr.head_ref, nerd_fonts), 24),
+            format!("{status}  {memberships}"),
+            status_style(&status),
+        )
+    };
+    let right_width = display_width(&right).min(width.saturating_sub(4));
     let branch_width = if branch.is_empty() {
         0
     } else {
-        branch.chars().count() + 1
+        display_width(&branch) + 1
     };
     let left_width = width.saturating_sub(right_width + branch_width + 4).max(1);
     let left = truncate(&left, left_width);
     let padding = width
-        .saturating_sub(2 + left.chars().count() + branch_width + right_width)
+        .saturating_sub(2 + display_width(&left) + branch_width + right_width)
         .max(1);
 
     Line::from(vec![
@@ -408,7 +419,7 @@ fn search_match_line(
         Span::raw(if branch.is_empty() { "" } else { " " }),
         Span::styled(branch, theme::branch()),
         Span::raw(" ".repeat(padding)),
-        Span::styled(truncate(&right, right_width), status_style(&status)),
+        Span::styled(truncate(&right, right_width), right_style),
     ])
 }
 
@@ -1070,11 +1081,29 @@ mod tests {
         let item = DashboardSearchMatch {
             pr: pr(),
             sections: vec![DashboardSection::MyPrs, DashboardSection::AwaitingReview],
+            match_reason: None,
         };
 
         let line = search_match_line(false, &item, 120, false).to_string();
 
         assert!(line.contains("My PRs + Review Requests"));
+    }
+
+    #[test]
+    fn search_result_prioritizes_hidden_match_reason() {
+        let item = DashboardSearchMatch {
+            pr: pr(),
+            sections: vec![DashboardSection::MyPrs],
+            match_reason: Some(crate::app::SearchMatchReason {
+                label: "reviewer",
+                value: "@needle-reviewer".to_owned(),
+            }),
+        };
+
+        let line = search_match_line(false, &item, 100, false).to_string();
+
+        assert!(line.contains("reviewer @needle-reviewer"));
+        assert!(!line.contains("branch:"));
     }
 
     fn pr() -> PullRequest {

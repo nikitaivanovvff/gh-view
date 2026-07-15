@@ -189,7 +189,7 @@ Run `gh-view --mock`, then use these cases to inspect the remaining design-syste
 | Repository identity | In My PRs, compare the adjacent `alpha/shared-ui` and `beta/shared-ui` groups. The full owner/repository labels keep them unambiguous. |
 | Reviewer outcome notation | Search for `reviewer notation`, open its repository group if needed, and compare the mixed outcomes: `✓` approved, `!` changes requested, `·` commented, and `?` requested. Narrow widths summarize omitted identities as `+N`. |
 | Detail metadata pressure | Search for `metadata pressure`, open PR `#903`, and inspect it around 80 columns. Its long author, branches, title, reviewer, and unbroken body token expose clipping and wrapping priorities. |
-| Hidden fuzzy-match source | Search for `needle-reviewer` or `match-only-author-needle`. PR `#904` matches, but the visible result does not show the author or reviewer that caused the match. |
+| Fuzzy-match explanation | Search for `needle-reviewer` or `match-only-author-needle`. PR `#904` explains the hidden source as `reviewer @needle-reviewer-hidden-from-search-results` or `author @match-only-author-needle`. |
 
 Theme-picker scrolling is a contingent gap rather than a current visible defect: all current themes fit the enforced `40x15` minimum. Visual-regression coverage and nonzero-origin mouse geometry are test-suite gaps and cannot be represented honestly as GitHub mock data.
 

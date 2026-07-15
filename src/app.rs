@@ -13,6 +13,8 @@ pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
 pub use rows::DashboardSection;
 pub use rows::Row;
 pub use search::DashboardSearchMatch;
+#[cfg(test)]
+pub use search::SearchMatchReason;
 use status::classify_refresh_error;
 pub use status::{AppStatus, DashboardErrorLine, DashboardErrorPage, pull_request_status};
 use std::sync::mpsc;
