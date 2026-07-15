@@ -185,6 +185,19 @@ mod tests {
     }
 
     #[test]
+    fn loaded_dashboard_stays_visible_while_refreshing() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.dashboard.loading = true;
+
+        let text = draw_text(&app, 80, 20);
+
+        assert!(text.contains("Refreshing PRs"));
+        assert!(text.contains("#"));
+        assert!(text.contains("MY PRS"));
+    }
+
+    #[test]
     fn search_overlay_keeps_help_inside_a_standard_popup() {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();

@@ -134,6 +134,8 @@ Direct and team filters overlap. A PR requested from both you and one of your te
 
 Dashboard rows use select-first mouse behavior. Click a row to select it, then click the selected PR again to open it or the selected repository again to toggle it. Search results open with one click.
 
+After the initial load, refreshing keeps the current rows visible and shows progress in the header. If refresh fails, the existing rows remain available with a concise retry message.
+
 The theme picker supports `j`/`k`, arrow keys, the mouse wheel, and clicking a theme for a live preview. Press `enter` to save the selected theme to `[ui].theme`; `esc` cancels the preview and restores the previous theme.
 
 Preset colors are adapted from the official [Catppuccin](https://catppuccin.com/palette/), [Tokyo Night](https://github.com/folke/tokyonight.nvim), [Rosé Pine](https://rosepinetheme.com/palette/ingredients/), [Gruvbox](https://github.com/morhetz/gruvbox), [Solarized](https://ethanschoonover.com/solarized/), and [GitHub Primer](https://primer.style/primitives/colors) palettes.

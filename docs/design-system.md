@@ -308,7 +308,6 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 - Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
 - Search may hide the field that caused a fuzzy match.
 - Search and theme picker need dedicated tiny-height behavior and list scrolling.
-- Background refresh replaces loaded dashboard content; stale-data failure feedback is incomplete for some error classes.
 - Selection and scroll can diverge, allowing keyboard selection to move outside the visible viewport.
 - Full-page errors can preserve decorative art while clipping remediation on short terminals.
 - Several palette roles, especially muted and light-theme semantic colors, need formal contrast validation.
@@ -371,7 +370,7 @@ Each question requires an explicit product decision before a behavior-changing i
 
 - Option A: every refresh uses the full loading page.
 - Option B: only initial load is full-screen; refresh keeps stale rows and shows progress.
-- **Recommendation:** Option B. It preserves context and makes degraded refresh failures understandable.
+- **Accepted:** Option B. Only initial load is full-screen; later refreshes retain current rows and show progress or classified failure feedback in the header.
 
 ### 9. Detail Browser Action
 

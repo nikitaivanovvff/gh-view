@@ -16,14 +16,6 @@ impl Dashboard {
             awaiting_review: group_by_repo(awaiting_review),
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.my_prs.iter().all(|group| group.prs.is_empty())
-            && self
-                .awaiting_review
-                .iter()
-                .all(|group| group.prs.is_empty())
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,11 +55,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_dashboard_is_empty() {
-        assert!(Dashboard::default().is_empty());
-    }
-
-    #[test]
     fn groups_prs_by_repo_and_sorts_repositories_alphabetically() {
         let dashboard = Dashboard::from_prs(
             vec![
@@ -89,12 +76,6 @@ mod tests {
         assert_eq!(dashboard.awaiting_review.len(), 2);
         assert_eq!(dashboard.awaiting_review[0].repo, "owner/c");
         assert_eq!(dashboard.awaiting_review[1].repo, "owner/d");
-    }
-
-    #[test]
-    fn reports_non_empty_when_any_section_has_prs() {
-        assert!(!Dashboard::from_prs(vec![pr("owner/a", 1, "2026-06-01")], vec![]).is_empty());
-        assert!(!Dashboard::from_prs(vec![], vec![pr("owner/a", 1, "2026-06-01")]).is_empty());
     }
 
     #[test]

@@ -122,7 +122,7 @@ impl App {
             }
             Err(status) => {
                 self.status = status;
-                if self.dashboard.data.is_empty() {
+                if !self.dashboard.has_loaded_once() {
                     self.dashboard.reset_after_error();
                 }
             }
@@ -396,8 +396,12 @@ impl App {
 
     pub fn status_message(&self) -> Option<&str> {
         match &self.status {
+            AppStatus::MissingGh => Some("GitHub CLI not found; press r to retry"),
+            AppStatus::Unauthenticated(_) => Some("GitHub CLI not authenticated; press r to retry"),
+            AppStatus::GitHubOutage(_) => Some("GitHub is unavailable; press r to retry"),
+            AppStatus::Timeout(_) => Some("GitHub timed out; press r to retry"),
             AppStatus::Error(message) => Some(message),
-            _ => None,
+            AppStatus::Ready => None,
         }
     }
 
@@ -603,7 +607,7 @@ impl App {
     }
 
     pub fn dashboard_error_page(&self) -> Option<DashboardErrorPage> {
-        status::dashboard_error_page(&self.status, self.dashboard.data.is_empty())
+        status::dashboard_error_page(&self.status, !self.dashboard.has_loaded_once())
     }
 
     pub fn is_mock(&self) -> bool {
@@ -756,7 +760,8 @@ mod tests {
         app.apply_refresh_result(Err(AppStatus::Error("load failed".to_owned())));
 
         assert!(!app.dashboard.loading);
-        assert!(app.dashboard.data.is_empty());
+        assert!(app.dashboard.data.my_prs.is_empty());
+        assert!(app.dashboard.data.awaiting_review.is_empty());
         assert!(app.dashboard_error_page().is_some());
         assert!(matches!(app.rows().first(), Some(Row::Message(_))));
     }
@@ -779,6 +784,10 @@ mod tests {
         assert_eq!(app.dashboard.selected, selected);
         assert_eq!(app.search_query(), Some("1"));
         assert!(app.dashboard_error_page().is_none());
+        assert_eq!(
+            app.status_message(),
+            Some("GitHub CLI not found; press r to retry")
+        );
         assert!(
             app.dashboard
                 .section_pr_count(DashboardSection::AwaitingReview)
@@ -974,7 +983,27 @@ mod tests {
         app.dashboard.loading = false;
         app.refresh();
         app.dashboard.loading = true;
-        assert!(app.show_dashboard_loading_screen());
+        assert!(!app.show_dashboard_loading_screen());
+    }
+
+    #[test]
+    fn successfully_loaded_empty_dashboard_keeps_its_empty_state_on_failure() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        app.apply_refresh_result(Ok(("octocat".to_owned(), Vec::new(), Vec::new())));
+        app.dashboard.loading = true;
+
+        assert!(!app.show_dashboard_loading_screen());
+        app.apply_refresh_result(Err(AppStatus::Timeout("slow".to_owned())));
+
+        assert!(app.dashboard_error_page().is_none());
+        assert!(matches!(
+            app.rows().last(),
+            Some(Row::Message(message)) if message == "No PRs opened by you."
+        ));
+        assert_eq!(
+            app.status_message(),
+            Some("GitHub timed out; press r to retry")
+        );
     }
 
     #[test]

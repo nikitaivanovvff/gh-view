@@ -54,14 +54,26 @@ pub(super) fn render_dashboard(
         .unwrap_or_else(|| "@unknown".to_owned());
     let header_left_width = display_width("GH-VIEW") + 2 + display_width(&user);
     let notice_width = width.saturating_sub(header_left_width);
-    let notice = truncate(app.copy_notice_message().unwrap_or_default(), notice_width);
+    let (notice, notice_style) = if app.dashboard.loading {
+        (
+            format!("Refreshing PRs{}", loading_dots(app.loading_frame)),
+            theme::warning(),
+        )
+    } else if let Some(message) = app.copy_notice_message() {
+        (message.to_owned(), theme::branch())
+    } else if let Some(message) = app.status_message() {
+        (message.to_owned(), theme::danger())
+    } else {
+        (String::new(), theme::normal())
+    };
+    let notice = truncate(&notice, notice_width);
     let padding = notice_width.saturating_sub(display_width(&notice));
     let header = vec![
         Span::styled("GH-VIEW", theme::accent().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(user, theme::muted()),
         Span::raw(" ".repeat(padding)),
-        Span::styled(notice, theme::branch()),
+        Span::styled(notice, notice_style),
     ];
     lines.push(Line::from(header));
     lines.push(rule_line(width));
@@ -217,9 +229,6 @@ fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         FooterItem::new("t", "theme"),
         FooterItem::new("r", "refresh"),
     ]);
-    if let Some(message) = app.status_message() {
-        items.push(FooterItem::new("!", message));
-    }
     if app.is_mock() {
         let mode = match app.mock_error_mode() {
             Some(crate::github::MockErrorMode::GitHubDown) => "down",

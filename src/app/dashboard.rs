@@ -46,6 +46,7 @@ pub struct DashboardState {
     section_positions: [DashboardPosition; 2],
     pub(super) search: Option<DashboardSearchState>,
     pub loading: bool,
+    has_loaded_once: bool,
     collapsed_groups: BTreeSet<String>,
     repo_pages: BTreeMap<String, usize>,
     pub(super) rx: Option<DashboardReceiver>,
@@ -69,6 +70,7 @@ impl DashboardState {
             section_positions: [DashboardPosition::default(); 2],
             search: None,
             loading: false,
+            has_loaded_once: false,
             collapsed_groups: BTreeSet::new(),
             repo_pages: BTreeMap::new(),
             rx: None,
@@ -77,14 +79,14 @@ impl DashboardState {
 
     pub fn rows(&self, status: &AppStatus, config: &DashboardConfig) -> Vec<Row<'_>> {
         match status {
-            AppStatus::MissingGh if self.data.is_empty() => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
-            AppStatus::Unauthenticated(_) if self.data.is_empty() => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
-            AppStatus::GitHubOutage(_) if self.data.is_empty() => return github_outage_rows(),
-            AppStatus::Timeout(_) if self.data.is_empty() => return vec![
+            AppStatus::MissingGh if !self.has_loaded_once => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
+            AppStatus::Unauthenticated(_) if !self.has_loaded_once => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
+            AppStatus::GitHubOutage(_) if !self.has_loaded_once => return github_outage_rows(),
+            AppStatus::Timeout(_) if !self.has_loaded_once => return vec![
                 Row::Message("GitHub is taking too long to answer.".to_owned()),
                 Row::Message("The last gh command was stopped after 30s. Press r to retry.".to_owned()),
             ],
-            AppStatus::Error(_) if self.data.is_empty() => return vec![Row::Message("Could not load pull requests. Press r to retry.".to_owned())],
+            AppStatus::Error(_) if !self.has_loaded_once => return vec![Row::Message("Could not load pull requests. Press r to retry.".to_owned())],
             _ => {}
         }
 
@@ -246,6 +248,7 @@ impl DashboardState {
     ) {
         self.current_user = Some(user);
         self.data = Dashboard::from_prs(my_prs, reviews);
+        self.has_loaded_once = true;
         self.clamp_search_selection();
         let valid_groups = group_names(&self.data);
         self.collapsed_groups = self
@@ -396,7 +399,11 @@ impl DashboardState {
     }
 
     pub fn show_loading_screen(&self) -> bool {
-        self.loading
+        self.loading && !self.has_loaded_once
+    }
+
+    pub(super) fn has_loaded_once(&self) -> bool {
+        self.has_loaded_once
     }
 
     pub fn open_search(&mut self) {
