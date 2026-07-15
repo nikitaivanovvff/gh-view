@@ -325,7 +325,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: keep the primary count as total loaded PRs.
 - Option B: show the active filtered count.
 - Option C: show `[filtered/total]`.
-- **Recommendation:** Option B. The adjacent filter already gives total/direct/team counts, while primary navigation should describe the currently displayed collection. Do not use a fraction because fractions otherwise mean navigation state.
+- **Accepted:** Option B. The primary count shows the active filtered collection. The adjacent filter gives total/direct/team counts, and fractions remain reserved for navigation state.
 
 ### 2. Direct And Team Overlap
 

@@ -218,11 +218,18 @@ impl DashboardState {
     }
 
     pub fn section_pr_count(&self, section: DashboardSection) -> usize {
-        let groups = match section {
-            DashboardSection::MyPrs => &self.data.my_prs,
-            DashboardSection::AwaitingReview => &self.data.awaiting_review,
-        };
-        groups.iter().map(|group| group.prs.len()).sum()
+        match section {
+            DashboardSection::MyPrs => self.data.my_prs.iter().map(|group| group.prs.len()).sum(),
+            DashboardSection::AwaitingReview => {
+                let login = self.current_user.as_deref().unwrap_or_default();
+                self.data
+                    .awaiting_review
+                    .iter()
+                    .flat_map(|group| &group.prs)
+                    .filter(|pr| self.review_scope.matches(pr, login))
+                    .count()
+            }
+        }
     }
 
     pub fn apply_success(

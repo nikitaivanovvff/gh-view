@@ -824,8 +824,18 @@ mod tests {
 
         assert_eq!(app.dashboard.review_scope_counts(), (7, 6, 2));
         assert_eq!(app.dashboard.review_scope(), ReviewScope::All);
+        assert_eq!(
+            app.dashboard
+                .section_pr_count(DashboardSection::AwaitingReview),
+            7
+        );
 
         assert!(app.set_review_scope(ReviewScope::Team));
+        assert_eq!(
+            app.dashboard
+                .section_pr_count(DashboardSection::AwaitingReview),
+            2
+        );
         let team_numbers: Vec<_> = app
             .rows()
             .iter()
@@ -834,6 +844,11 @@ mod tests {
         assert_eq!(team_numbers, vec![314, 9]);
 
         assert!(app.set_review_scope(ReviewScope::Direct));
+        assert_eq!(
+            app.dashboard
+                .section_pr_count(DashboardSection::AwaitingReview),
+            6
+        );
         assert!(
             app.rows()
                 .iter()
