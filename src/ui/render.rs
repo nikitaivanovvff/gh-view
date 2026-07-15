@@ -1,10 +1,17 @@
 use super::dashboard::render_dashboard;
 use super::detail::render_detail;
-use super::layout::MouseLayout;
+use super::layout::{
+    DASHBOARD_MIN_SIZE, DETAIL_MIN_SIZE, MOCK_DEBUG_MIN_SIZE, MouseLayout, SEARCH_MIN_SIZE,
+    THEME_PICKER_MIN_SIZE,
+};
 use super::mock_debug::render_mock_debug;
 use super::theme;
 use super::theme_picker::render_theme_picker;
 use crate::app::{App, AppView};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+use ratatui::style::Modifier;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
 
 pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
     let mut mouse_layout = MouseLayout::default();
@@ -14,6 +21,23 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
         ratatui::widgets::Block::default().style(theme::background()),
         area,
     );
+
+    let (surface, minimum) = if app.theme_picker_is_open() {
+        ("theme picker", THEME_PICKER_MIN_SIZE)
+    } else if app.mock_debug_is_open() {
+        ("mock debug", MOCK_DEBUG_MIN_SIZE)
+    } else if app.search_is_open() {
+        ("search", SEARCH_MIN_SIZE)
+    } else {
+        match app.view {
+            AppView::Dashboard => ("dashboard", DASHBOARD_MIN_SIZE),
+            AppView::Detail => ("PR detail", DETAIL_MIN_SIZE),
+        }
+    };
+    if area.width < minimum.0 || area.height < minimum.1 {
+        render_terminal_too_small(frame, surface, minimum);
+        return MouseLayout::default();
+    }
 
     match app.view {
         AppView::Dashboard => render_dashboard(frame, app, &mut mouse_layout),
@@ -27,6 +51,33 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
     }
 
     mouse_layout
+}
+
+fn render_terminal_too_small(frame: &mut ratatui::Frame<'_>, surface: &str, minimum: (u16, u16)) {
+    let area = frame.area();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(45),
+            Constraint::Length(2),
+            Constraint::Min(0),
+        ])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "Terminal too small",
+                theme::danger().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!(
+                "Need {}x{} for {surface}; current {}x{}.",
+                minimum.0, minimum.1, area.width, area.height
+            )),
+        ])
+        .style(theme::normal())
+        .alignment(Alignment::Center),
+        rows[1],
+    );
 }
 
 #[cfg(test)]
@@ -106,7 +157,7 @@ mod tests {
         assert_eq!(layout.target_at(Position::new(4, 28)), None);
 
         app.dashboard.scroll = 6;
-        let layout = draw_layout(&app, 100, 8);
+        let layout = draw_layout(&app, 100, 10);
         assert_eq!(
             layout.target_at(Position::new(4, 0)),
             Some(super::super::layout::MouseTarget::DashboardRow(2))
@@ -298,5 +349,26 @@ mod tests {
 
         assert_eq!(layout.target_at(Position::new(0, 0)), None);
         assert_eq!(layout.target_at(Position::new(9, 1)), None);
+        assert!(draw_text(&app, 39, 10).contains("Need 40x10 for dashboard"));
+        assert!(draw_text(&app, 40, 9).contains("Terminal too small"));
+        assert!(!draw_text(&app, 40, 10).contains("Terminal too small"));
+    }
+
+    #[test]
+    fn tiny_terminal_reports_active_overlay_requirement() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.open_search();
+        assert!(draw_text(&app, 40, 8).contains("Need 40x9 for search"));
+
+        app.close_search();
+        app.open_theme_picker();
+        assert!(draw_text(&app, 40, 14).contains("Need 40x15 for theme picker"));
+        let layout = draw_layout(&app, 40, 14);
+        assert_eq!(layout.target_at(Position::new(0, 0)), None);
+        assert_eq!(layout.target_at(Position::new(39, 13)), None);
+
+        app.cancel_theme_picker();
+        app.view = AppView::Detail;
+        assert!(draw_text(&app, 40, 23).contains("Need 40x24 for PR detail"));
     }
 }

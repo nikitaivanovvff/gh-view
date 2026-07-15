@@ -251,11 +251,11 @@ fn render_search_overlay(
     mouse_layout: &mut MouseLayout,
 ) {
     let area = frame.area();
-    if area.width < 8 || area.height < 3 {
+    if area.width < 40 || area.height < 9 {
         return;
     }
 
-    let width = ((area.width as f32 * 0.7) as u16).clamp(8, area.width);
+    let width = ((area.width as f32 * 0.7) as u16).clamp(40, area.width);
     let height = area.height.saturating_sub(2).clamp(3, 12);
     let popup = Rect {
         x: area.x + area.width.saturating_sub(width) / 2,

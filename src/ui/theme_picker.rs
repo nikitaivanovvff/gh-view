@@ -95,12 +95,12 @@ pub(super) fn render_theme_picker(
 }
 
 pub(super) fn picker_area(area: Rect) -> Option<Rect> {
-    if area.width < 18 || area.height < 8 {
+    if area.width < 40 || area.height < 15 {
         return None;
     }
 
-    let width = ((area.width as f32 * 0.64) as u16).clamp(18, area.width);
-    let height = (theme::theme_count().saturating_add(7) as u16).clamp(8, area.height);
+    let width = ((area.width as f32 * 0.64) as u16).clamp(40, area.width);
+    let height = (theme::theme_count().saturating_add(7) as u16).clamp(15, area.height);
     Some(Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
         y: area.y + area.height.saturating_sub(height) / 2,

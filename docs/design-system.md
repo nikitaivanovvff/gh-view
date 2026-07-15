@@ -390,7 +390,7 @@ Each question requires an explicit product decision before a behavior-changing i
 
 - Option A: progressively strip content with no hard minimum.
 - Option B: show `Terminal too small` below a documented minimum.
-- **Recommendation:** Option B after establishing useful minima for dashboard, detail, and overlays. Invisible modes are worse than an explicit limitation.
+- **Accepted:** Option B. Undersized surfaces show `Terminal too small` with their requirement: dashboard `40x10`, detail `40x24`, search `40x9`, theme picker `40x15`, and mock debug `40x11`.
 
 ### 12. Palette Contrast Target
 
