@@ -82,7 +82,7 @@ impl PullRequestSource for MockGhClient {
 
     fn fetch_my_prs(&self, _login: &str) -> Result<Vec<PullRequest>> {
         self.maybe_fail()?;
-        Ok(vec![
+        let mut prs = vec![
             mock_pr(MockPr {
                 repo: "earendil/gh-view",
                 number: 37,
@@ -179,7 +179,9 @@ impl PullRequestSource for MockGhClient {
                 check_status: Some("failing"),
                 reviewers: vec!["carol"],
             }),
-        ])
+        ];
+        prs.extend(mock_design_gap_prs());
+        Ok(prs)
     }
 
     fn fetch_review_requests(&self, _login: &str) -> Result<Vec<PullRequest>> {
@@ -281,6 +283,23 @@ impl PullRequestSource for MockGhClient {
 
     fn fetch_pr_detail(&self, pr: &PullRequest) -> Result<PullRequestDetail> {
         self.maybe_fail()?;
+        if pr.repo == "design-lab/metadata-pressure" && pr.number == 903 {
+            return Ok(PullRequestDetail {
+                pr: pr.clone(),
+                body: "This fixture exposes detail metadata pressure with deliberately long identities and branches.\n\nThe next token has no break opportunities and currently exceeds the body wrapping budget:\n\nsupercalifragilisticexpialidocious-with-an-unbroken-suffix-that-keeps-going-past-a-narrow-terminal-column-budget".to_owned(),
+                state: "OPEN".to_owned(),
+                mergeable: Some("CONFLICTING".to_owned()),
+                head_ref: "feature/a-branch-name-long-enough-to-crowd-out-state-and-mergeability-metadata".to_owned(),
+                base_ref: "release/a-similarly-long-base-branch-for-responsive-layout-testing".to_owned(),
+                discussion: mock_issue_comments(pr),
+                reviews: vec![PrReview {
+                    author: "reviewer-with-an-excessively-long-github-login".to_owned(),
+                    state: "COMMENTED".to_owned(),
+                    body: "The metadata line clips before all fields remain understandable.".to_owned(),
+                    submitted_at: "2026-07-14T11:30:00Z".to_owned(),
+                }],
+            });
+        }
         Ok(PullRequestDetail {
             pr: pr.clone(),
             body: "This PR wires the phase-2 detail screen. It keeps GitHub access behind the data-source trait and renders comments/reviews in a flat terminal layout.".to_owned(),
@@ -315,6 +334,116 @@ struct MockPr<'a> {
     review_decision: Option<&'a str>,
     check_status: Option<&'a str>,
     reviewers: Vec<&'a str>,
+}
+
+fn mock_design_gap_prs() -> Vec<PullRequest> {
+    let mut reviewer_pressure = mock_pr(MockPr {
+        repo: "design-lab/reviewer-pressure",
+        number: 905,
+        title: "Design gap: reviewer notation and overflow",
+        head_ref: "reviewer-outcome-notation-and-overflow-demonstration",
+        author: "author-with-a-long-login",
+        updated_at: "2026-07-14T14:00:00Z",
+        is_draft: false,
+        review_decision: Some("CHANGES_REQUESTED"),
+        check_status: Some("pending"),
+        reviewers: vec![],
+    });
+    reviewer_pressure.reviewers = vec![
+        Reviewer {
+            login: "approved-reviewer-with-a-long-login".to_owned(),
+            state: ReviewerState::Approved,
+        },
+        Reviewer {
+            login: "changes-requested-reviewer-with-a-long-login".to_owned(),
+            state: ReviewerState::ChangesRequested,
+        },
+        Reviewer {
+            login: "commented-reviewer-with-a-long-login".to_owned(),
+            state: ReviewerState::Commented,
+        },
+    ];
+    reviewer_pressure.review_requested = vec![
+        ReviewRequestTarget::User("requested-user-with-a-long-login".to_owned()),
+        ReviewRequestTarget::Team("design-lab/reviewers-with-a-long-team-name".to_owned()),
+        ReviewRequestTarget::User("another-requested-reviewer".to_owned()),
+    ];
+
+    vec![
+        mock_pr(MockPr {
+            repo: "alpha/shared-ui",
+            number: 901,
+            title: "Design gap: alpha repository identity",
+            head_ref: "alpha-repository-identity",
+            author: "nikita",
+            updated_at: "2026-07-10T10:00:00Z",
+            is_draft: false,
+            review_decision: Some("REVIEW_REQUIRED"),
+            check_status: Some("passing"),
+            reviewers: vec!["alice"],
+        }),
+        mock_pr(MockPr {
+            repo: "beta/shared-ui",
+            number: 902,
+            title: "Design gap: beta repository identity",
+            head_ref: "beta-repository-identity",
+            author: "nikita",
+            updated_at: "2026-07-11T10:00:00Z",
+            is_draft: false,
+            review_decision: Some("REVIEW_REQUIRED"),
+            check_status: Some("passing"),
+            reviewers: vec!["bob"],
+        }),
+        mock_pr(MockPr {
+            repo: "design-lab/metadata-pressure",
+            number: 903,
+            title: "Design gap: detail metadata pressure from an intentionally long pull request title that competes with every other field",
+            head_ref: "feature/a-branch-name-long-enough-to-crowd-out-state-and-mergeability-metadata",
+            author: "author-with-an-excessively-long-github-login",
+            updated_at: "2026-07-12T10:00:00Z",
+            is_draft: false,
+            review_decision: None,
+            check_status: Some("pending"),
+            reviewers: vec!["reviewer-with-an-excessively-long-github-login"],
+        }),
+        mock_pr(MockPr {
+            repo: "design-lab/search-transparency",
+            number: 904,
+            title: "Design gap: hidden fuzzy match source",
+            head_ref: "ordinary-visible-branch",
+            author: "match-only-author-needle",
+            updated_at: "2026-07-13T10:00:00Z",
+            is_draft: false,
+            review_decision: Some("REVIEW_REQUIRED"),
+            check_status: Some("passing"),
+            reviewers: vec!["needle-reviewer-hidden-from-search-results"],
+        }),
+        reviewer_pressure,
+        mock_pr(MockPr {
+            repo: "design-lab/viewport-overflow-a",
+            number: 906,
+            title: "Design gap: viewport overflow first marker",
+            head_ref: "viewport-overflow-a",
+            author: "nikita",
+            updated_at: "2026-07-09T10:00:00Z",
+            is_draft: false,
+            review_decision: Some("APPROVED"),
+            check_status: Some("passing"),
+            reviewers: vec!["alice"],
+        }),
+        mock_pr(MockPr {
+            repo: "design-lab/viewport-overflow-b",
+            number: 907,
+            title: "Design gap: viewport overflow second marker",
+            head_ref: "viewport-overflow-b",
+            author: "nikita",
+            updated_at: "2026-07-08T10:00:00Z",
+            is_draft: false,
+            review_decision: Some("APPROVED"),
+            check_status: Some("passing"),
+            reviewers: vec!["bob"],
+        }),
+    ]
 }
 
 fn mock_review_threads(pr: &PullRequest) -> Vec<DiscussionItem> {
@@ -427,5 +556,27 @@ mod tests {
         assert_eq!(discussion.len(), 1);
         assert!(discussion[0].code_context.is_some());
         assert!(client.fetch_pr_discussion(other_pr).unwrap().is_empty());
+    }
+
+    #[test]
+    fn design_gap_fixtures_cover_identity_reviewers_search_and_detail_pressure() {
+        let client = MockGhClient::new();
+        let prs = client.fetch_my_prs("nikita").unwrap();
+
+        assert!(prs.iter().any(|pr| pr.repo == "alpha/shared-ui"));
+        assert!(prs.iter().any(|pr| pr.repo == "beta/shared-ui"));
+
+        let reviewers = prs.iter().find(|pr| pr.number == 905).unwrap();
+        assert_eq!(reviewers.reviewers.len(), 3);
+        assert_eq!(reviewers.review_requested.len(), 3);
+
+        let search = prs.iter().find(|pr| pr.number == 904).unwrap();
+        assert!(search.author.contains("needle"));
+        assert!(search.reviewers[0].login.contains("needle"));
+
+        let metadata = prs.iter().find(|pr| pr.number == 903).unwrap();
+        let detail = client.fetch_pr_detail(metadata).unwrap();
+        assert!(detail.head_ref.len() > 60);
+        assert!(detail.body.contains("supercalifragilisticexpialidocious"));
     }
 }

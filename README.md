@@ -177,7 +177,21 @@ Use mock mode to try the UI without a GitHub account or network calls:
 gh-view --mock
 ```
 
-The mock data includes several repositories, paginated repository groups, PR review states, CI states, review-thread comments, replies, and code context.
+The mock data includes several repositories, paginated repository groups, PR review states, CI states, review-thread comments, replies, code context, and deliberately difficult design-audit fixtures.
+
+### Mock design-audit fixtures
+
+Run `gh-view --mock`, then use these cases to inspect the remaining design-system gaps:
+
+| Gap | How to reproduce |
+| --- | --- |
+| Selection can leave the viewport | Resize to roughly `80x12`, stay in My PRs, and press `j` repeatedly through the many `design-lab` repositories. The selected row eventually moves below the visible viewport. |
+| Repository owner ambiguity | In My PRs, compare the adjacent `alpha/shared-ui` and `beta/shared-ui` groups. Both group labels render as `shared-ui`. |
+| Reviewer states rely on color | Search for `reviewer notation`, open its repository group if needed, and compare the mixed reviewer outcomes. The row bounds the long list but does not label outcomes or summarize omitted identities. |
+| Detail metadata pressure | Search for `metadata pressure`, open PR `#903`, and inspect it around 80 columns. Its long author, branches, title, reviewer, and unbroken body token expose clipping and wrapping priorities. |
+| Hidden fuzzy-match source | Search for `needle-reviewer` or `match-only-author-needle`. PR `#904` matches, but the visible result does not show the author or reviewer that caused the match. |
+
+Theme-picker scrolling is a contingent gap rather than a current visible defect: all current themes fit the enforced `40x15` minimum. Visual-regression coverage and nonzero-origin mouse geometry are test-suite gaps and cannot be represented honestly as GitHub mock data.
 
 ## Development
 
