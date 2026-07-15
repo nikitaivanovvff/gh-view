@@ -13,6 +13,8 @@ pub use detail::{DetailPane, DetailState, DetailStatus, DiscussionStatus};
 pub use rows::DashboardSection;
 pub use rows::Row;
 pub use search::DashboardSearchMatch;
+#[cfg(test)]
+pub use search::SearchMatchReason;
 use status::classify_refresh_error;
 pub use status::{AppStatus, DashboardErrorLine, DashboardErrorPage, pull_request_status};
 use std::sync::mpsc;
@@ -33,6 +35,7 @@ pub struct App {
     pub loading_frame: usize,
     pub theme_picker: Option<ThemePickerState>,
     mock_debug_open: bool,
+    help_open: bool,
     active_theme: usize,
     last_refresh_started_at: Option<Instant>,
     copy_notice: Option<CopyNotice>,
@@ -70,6 +73,7 @@ impl App {
             loading_frame: 0,
             theme_picker: None,
             mock_debug_open: false,
+            help_open: false,
             active_theme,
             last_refresh_started_at: None,
             copy_notice: None,
@@ -122,7 +126,7 @@ impl App {
             }
             Err(status) => {
                 self.status = status;
-                if self.dashboard.data.is_empty() {
+                if !self.dashboard.has_loaded_once() {
                     self.dashboard.reset_after_error();
                 }
             }
@@ -194,8 +198,12 @@ impl App {
             .cycle_review_scope(&self.status, &self.config.dashboard)
     }
 
-    pub fn open_search(&mut self) {
+    pub fn open_search(&mut self) -> bool {
+        if self.show_dashboard_loading_screen() || self.dashboard_error_page().is_some() {
+            return false;
+        }
         self.dashboard.open_search();
+        true
     }
 
     pub fn open_theme_picker(&mut self) {
@@ -238,6 +246,18 @@ impl App {
 
     pub fn mock_debug_is_open(&self) -> bool {
         self.mock_debug_open
+    }
+
+    pub fn open_help(&mut self) {
+        self.help_open = true;
+    }
+
+    pub fn close_help(&mut self) {
+        self.help_open = false;
+    }
+
+    pub fn help_is_open(&self) -> bool {
+        self.help_open
     }
 
     pub fn active_theme_index(&self) -> usize {
@@ -334,7 +354,14 @@ impl App {
             return;
         };
 
-        self.show_dashboard_section(item.section);
+        if let Some(section) = item.sections.first().copied() {
+            self.show_dashboard_section(section);
+            if section == DashboardSection::AwaitingReview
+                && !self.dashboard.review_scope_includes(&item.pr)
+            {
+                self.set_review_scope(ReviewScope::All);
+            }
+        }
         self.dashboard.close_search();
         self.open_detail_for_pr(item.pr);
     }
@@ -389,8 +416,12 @@ impl App {
 
     pub fn status_message(&self) -> Option<&str> {
         match &self.status {
+            AppStatus::MissingGh => Some("GitHub CLI not found; press r to retry"),
+            AppStatus::Unauthenticated(_) => Some("GitHub CLI not authenticated; press r to retry"),
+            AppStatus::GitHubOutage(_) => Some("GitHub is unavailable; press r to retry"),
+            AppStatus::Timeout(_) => Some("GitHub timed out; press r to retry"),
             AppStatus::Error(message) => Some(message),
-            _ => None,
+            AppStatus::Ready => None,
         }
     }
 
@@ -555,7 +586,17 @@ impl App {
     }
 
     pub fn open_selected_in_browser(&mut self) {
-        let url = match self.view {
+        let Some(url) = self.selected_browser_url() else {
+            return;
+        };
+
+        if let Err(error) = webbrowser::open(&url) {
+            self.status = AppStatus::Error(format!("failed to open browser: {error}"));
+        }
+    }
+
+    fn selected_browser_url(&self) -> Option<String> {
+        match self.view {
             AppView::Dashboard => self
                 .rows()
                 .get(self.dashboard.selected)
@@ -566,14 +607,6 @@ impl App {
                 .current
                 .as_ref()
                 .map(|detail| detail.pr.url.clone()),
-        };
-
-        let Some(url) = url else {
-            return;
-        };
-
-        if let Err(error) = webbrowser::open(&url) {
-            self.status = AppStatus::Error(format!("failed to open browser: {error}"));
         }
     }
 
@@ -596,7 +629,7 @@ impl App {
     }
 
     pub fn dashboard_error_page(&self) -> Option<DashboardErrorPage> {
-        status::dashboard_error_page(&self.status, self.dashboard.data.is_empty())
+        status::dashboard_error_page(&self.status, !self.dashboard.has_loaded_once())
     }
 
     pub fn is_mock(&self) -> bool {
@@ -749,7 +782,8 @@ mod tests {
         app.apply_refresh_result(Err(AppStatus::Error("load failed".to_owned())));
 
         assert!(!app.dashboard.loading);
-        assert!(app.dashboard.data.is_empty());
+        assert!(app.dashboard.data.my_prs.is_empty());
+        assert!(app.dashboard.data.awaiting_review.is_empty());
         assert!(app.dashboard_error_page().is_some());
         assert!(matches!(app.rows().first(), Some(Row::Message(_))));
     }
@@ -758,7 +792,6 @@ mod tests {
     fn refresh_failure_preserves_loaded_dashboard_state() {
         let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
-        app.next();
         app.toggle_selected_group();
         app.open_search();
         app.push_search_char('1');
@@ -772,6 +805,10 @@ mod tests {
         assert_eq!(app.dashboard.selected, selected);
         assert_eq!(app.search_query(), Some("1"));
         assert!(app.dashboard_error_page().is_none());
+        assert_eq!(
+            app.status_message(),
+            Some("GitHub CLI not found; press r to retry")
+        );
         assert!(
             app.dashboard
                 .section_pr_count(DashboardSection::AwaitingReview)
@@ -790,7 +827,7 @@ mod tests {
         app.refresh();
 
         assert_eq!(app.dashboard.active_section(), DashboardSection::MyPrs);
-        assert!(matches!(app.rows().first(), Some(Row::Section)));
+        assert!(matches!(app.rows().first(), Some(Row::Group { .. })));
         assert!(
             app.rows()
                 .iter()
@@ -803,7 +840,7 @@ mod tests {
         );
 
         assert!(app.show_dashboard_section(DashboardSection::AwaitingReview));
-        assert!(matches!(app.rows().first(), Some(Row::Section)));
+        assert!(matches!(app.rows().first(), Some(Row::Group { .. })));
         assert!(
             app.rows()
                 .iter()
@@ -824,8 +861,18 @@ mod tests {
 
         assert_eq!(app.dashboard.review_scope_counts(), (7, 6, 2));
         assert_eq!(app.dashboard.review_scope(), ReviewScope::All);
+        assert_eq!(
+            app.dashboard
+                .section_pr_count(DashboardSection::AwaitingReview),
+            7
+        );
 
         assert!(app.set_review_scope(ReviewScope::Team));
+        assert_eq!(
+            app.dashboard
+                .section_pr_count(DashboardSection::AwaitingReview),
+            2
+        );
         let team_numbers: Vec<_> = app
             .rows()
             .iter()
@@ -834,11 +881,26 @@ mod tests {
         assert_eq!(team_numbers, vec![314, 9]);
 
         assert!(app.set_review_scope(ReviewScope::Direct));
+        assert_eq!(
+            app.dashboard
+                .section_pr_count(DashboardSection::AwaitingReview),
+            6
+        );
         assert!(
             app.rows()
                 .iter()
                 .all(|row| !matches!(row, Row::Pr(pr) if !pr.has_direct_review_request("nikita")))
         );
+        let overlapping = app
+            .dashboard
+            .data
+            .awaiting_review
+            .iter()
+            .flat_map(|group| &group.prs)
+            .find(|pr| pr.number == 9)
+            .unwrap();
+        assert!(overlapping.has_direct_review_request("nikita"));
+        assert!(overlapping.has_team_review_request());
     }
 
     #[test]
@@ -942,7 +1004,27 @@ mod tests {
         app.dashboard.loading = false;
         app.refresh();
         app.dashboard.loading = true;
-        assert!(app.show_dashboard_loading_screen());
+        assert!(!app.show_dashboard_loading_screen());
+    }
+
+    #[test]
+    fn successfully_loaded_empty_dashboard_keeps_its_empty_state_on_failure() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        app.apply_refresh_result(Ok(("octocat".to_owned(), Vec::new(), Vec::new())));
+        app.dashboard.loading = true;
+
+        assert!(!app.show_dashboard_loading_screen());
+        app.apply_refresh_result(Err(AppStatus::Timeout("slow".to_owned())));
+
+        assert!(app.dashboard_error_page().is_none());
+        assert!(matches!(
+            app.rows().last(),
+            Some(Row::Message(message)) if message == "No PRs opened by you."
+        ));
+        assert_eq!(
+            app.status_message(),
+            Some("GitHub timed out; press r to retry")
+        );
     }
 
     #[test]
@@ -1028,12 +1110,11 @@ mod tests {
         let mut app = App::with_default_config(Box::new(source));
         app.refresh();
 
-        app.next();
         app.toggle_selected_group();
 
         let rows = app.rows();
         assert!(matches!(
-            rows.get(1),
+            rows.first(),
             Some(Row::Group {
                 repo: "owner/shared",
                 open: false,
@@ -1044,7 +1125,7 @@ mod tests {
         app.show_dashboard_section(DashboardSection::AwaitingReview);
         let rows = app.rows();
         assert!(matches!(
-            rows.get(1),
+            rows.first(),
             Some(Row::Group {
                 repo: "owner/shared",
                 open: true,
@@ -1054,7 +1135,7 @@ mod tests {
 
         app.show_dashboard_section(DashboardSection::MyPrs);
         assert!(matches!(
-            app.rows().get(1),
+            app.rows().first(),
             Some(Row::Group { open: false, .. })
         ));
     }
@@ -1067,15 +1148,15 @@ mod tests {
         let expanded_count = app.rows().len();
         app.next();
         assert_eq!(app.dashboard.selected, 1);
+        app.previous();
+        assert_eq!(app.dashboard.selected, 0);
         app.toggle_selected_group();
 
         assert!(app.rows().len() < expanded_count);
         assert!(matches!(
-            app.rows().get(1),
+            app.rows().first(),
             Some(Row::Group { open: false, .. })
         ));
-        app.previous();
-        assert_eq!(app.dashboard.selected, 0);
     }
 
     #[test]
@@ -1139,7 +1220,6 @@ mod tests {
     fn search_returns_loaded_prs_even_when_group_is_collapsed() {
         let mut app = App::with_default_config(Box::new(TestSource::ok()));
         app.refresh();
-        app.next();
         app.toggle_selected_group();
 
         assert!(
@@ -1183,6 +1263,30 @@ mod tests {
         assert_eq!(
             app.dashboard.active_section(),
             DashboardSection::AwaitingReview
+        );
+    }
+
+    #[test]
+    fn opening_hidden_review_request_search_result_switches_to_all() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.refresh();
+        app.show_dashboard_section(DashboardSection::AwaitingReview);
+        app.set_review_scope(ReviewScope::Direct);
+        app.open_search();
+        for ch in "314".chars() {
+            app.push_search_char(ch);
+        }
+
+        app.open_selected_search_match();
+
+        assert_eq!(
+            app.dashboard.active_section(),
+            DashboardSection::AwaitingReview
+        );
+        assert_eq!(app.dashboard.review_scope(), ReviewScope::All);
+        assert_eq!(
+            app.detail.current.as_ref().map(|detail| detail.pr.number),
+            Some(314)
         );
     }
 
@@ -1266,6 +1370,23 @@ mod tests {
         assert_eq!(app.detail.active_pane, DetailPane::Description);
         app.scroll_active_up();
         assert_eq!(app.detail.description_scroll, 0);
+    }
+
+    #[test]
+    fn detail_browser_target_remains_the_pr_when_discussion_is_focused() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        app.refresh();
+        app.next();
+        app.next();
+        app.open_selected_detail();
+        app.focus_detail_pane(DetailPane::Discussion);
+
+        let expected = app.detail.current.as_ref().unwrap().pr.url.clone();
+
+        assert_eq!(
+            app.selected_browser_url().as_deref(),
+            Some(expected.as_str())
+        );
     }
 
     #[test]

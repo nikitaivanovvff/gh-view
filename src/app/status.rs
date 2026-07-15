@@ -134,7 +134,7 @@ pub fn pull_request_status(pr: &PullRequest) -> String {
         Some("APPROVED") => "approved".to_owned(),
         Some("CHANGES_REQUESTED") => "changes requested".to_owned(),
         Some("REVIEW_REQUIRED") => "needs review".to_owned(),
-        Some("") | None => "needs review".to_owned(),
+        Some("") | None => "no decision".to_owned(),
         Some(value) => value.to_ascii_lowercase().replace('_', " "),
     }
 }

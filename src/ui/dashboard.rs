@@ -1,7 +1,7 @@
 use super::layout::{MouseLayout, MouseTarget};
 use super::text::{
-    age_label, ci_style, ci_text, is_stale, loading_dots, pr_status, reviewer_style, rule_line,
-    selected_style, status_style, truncate,
+    age_label, ci_style, ci_text, display_width, is_stale, loading_dots, pr_status, reviewer_style,
+    rule_line, selected_style, status_style, truncate,
 };
 use super::theme;
 use crate::app::{
@@ -30,21 +30,26 @@ pub(super) fn render_dashboard(
     }
 
     if let Some(error_page) = app.dashboard_error_page() {
-        render_dashboard_error(frame, &error_page);
+        render_dashboard_error(frame, &error_page, mouse_layout);
         return;
     }
 
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(1),
+            Constraint::Length(2),
+        ])
         .split(area);
 
     let rows = app.rows();
     let selected = app.dashboard.selected.min(rows.len().saturating_sub(1));
-    let width = chunks[0].width as usize;
+    let width = chunks[1].width as usize;
     let mut lines = Vec::new();
     let mut targets = Vec::new();
+    let mut selected_lines = None;
 
     let user = app
         .dashboard
@@ -52,52 +57,66 @@ pub(super) fn render_dashboard(
         .as_deref()
         .map(|user| format!("@{user}"))
         .unwrap_or_else(|| "@unknown".to_owned());
-    let header_left_width = "GH-VIEW".chars().count() + 2 + user.chars().count();
+    let header_left_width = display_width("GH-VIEW") + 2 + display_width(&user);
     let notice_width = width.saturating_sub(header_left_width);
-    let notice = truncate(app.copy_notice_message().unwrap_or_default(), notice_width);
-    let padding = notice_width.saturating_sub(notice.chars().count());
+    let (notice, notice_style) = if app.dashboard.loading {
+        (
+            format!("Refreshing PRs{}", loading_dots(app.loading_frame)),
+            theme::warning(),
+        )
+    } else if let Some(message) = app.copy_notice_message() {
+        (message.to_owned(), theme::branch())
+    } else if let Some(message) = app.status_message() {
+        (message.to_owned(), theme::danger())
+    } else {
+        (String::new(), theme::normal())
+    };
+    let notice = truncate(&notice, notice_width);
+    let padding = notice_width.saturating_sub(display_width(&notice));
     let header = vec![
         Span::styled("GH-VIEW", theme::accent().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(user, theme::muted()),
         Span::raw(" ".repeat(padding)),
-        Span::styled(notice, theme::branch()),
+        Span::styled(notice, notice_style),
     ];
-    lines.push(Line::from(header));
-    lines.push(rule_line(width));
+    let mut header_lines = vec![Line::from(header), rule_line(width)];
+    header_lines.extend(dashboard_view_lines(app, width));
+
+    let mut x = 0usize;
+    for (label_index, section) in [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
+        .into_iter()
+        .enumerate()
+    {
+        let label = dashboard_view_label(app, section, label_index);
+        mouse_layout.push(
+            Rect::new(
+                chunks[0].x.saturating_add(x.min(u16::MAX as usize) as u16),
+                chunks[0].y.saturating_add(2),
+                display_width(&label).min(u16::MAX as usize) as u16,
+                1,
+            ),
+            MouseTarget::DashboardSection(section),
+        );
+        x += display_width(&label) + DASHBOARD_VIEW_GAP;
+    }
+    if app.dashboard.active_section() == DashboardSection::AwaitingReview {
+        for (scope, label, x) in review_scope_placements(app, width) {
+            mouse_layout.push(
+                Rect::new(
+                    chunks[0].x.saturating_add(x.min(u16::MAX as usize) as u16),
+                    chunks[0].y.saturating_add(2),
+                    display_width(&label).min(u16::MAX as usize) as u16,
+                    1,
+                ),
+                MouseTarget::ReviewScope(scope),
+            );
+        }
+    }
+
     for (index, row) in rows.iter().enumerate() {
+        let line_start = lines.len();
         match row {
-            Row::Section => {
-                let line = lines.len();
-                let mut x = 0usize;
-                for (label_index, section) in
-                    [DashboardSection::MyPrs, DashboardSection::AwaitingReview]
-                        .into_iter()
-                        .enumerate()
-                {
-                    let label = dashboard_view_label(app, section, label_index);
-                    targets.push((
-                        line,
-                        1,
-                        x,
-                        label.chars().count(),
-                        MouseTarget::DashboardSection(section),
-                    ));
-                    x += label.chars().count() + DASHBOARD_VIEW_GAP;
-                }
-                if app.dashboard.active_section() == DashboardSection::AwaitingReview {
-                    for (scope, label, x) in review_scope_placements(app, width) {
-                        targets.push((
-                            line,
-                            1,
-                            x,
-                            label.chars().count(),
-                            MouseTarget::ReviewScope(scope),
-                        ));
-                    }
-                }
-                lines.extend(dashboard_view_lines(app, width));
-            }
             Row::Group {
                 repo,
                 count,
@@ -114,38 +133,49 @@ pub(super) fn render_dashboard(
                     *open,
                     *page,
                     *page_count,
+                    width,
                 ));
             }
             Row::Pr(pr) => {
                 let is_selected = index == selected;
                 targets.push((lines.len(), 3, 0, width, MouseTarget::DashboardRow(index)));
                 lines.push(pr_line(is_selected, pr, width));
-                lines.push(branch_line(is_selected, pr, app.config().nerd_fonts));
-                lines.push(reviewers_line(is_selected, pr));
+                lines.push(branch_line(is_selected, pr, app.config().nerd_fonts, width));
+                lines.push(reviewers_line(is_selected, pr, width));
             }
             Row::Message(message) => {
                 targets.push((lines.len(), 1, 0, width, MouseTarget::DashboardRow(index)));
-                lines.push(message_line(index == selected, message));
+                lines.push(message_line(index == selected, message, width));
             }
+        }
+        if index == selected {
+            selected_lines = Some((line_start, lines.len().saturating_sub(line_start)));
         }
     }
 
-    let scroll = app
-        .dashboard
-        .scroll
-        .min(max_scroll(lines.len(), chunks[0].height));
-    for target in targets {
-        register_visible_target(mouse_layout, chunks[0], target, scroll);
+    let max_scroll = max_scroll(lines.len(), chunks[1].height);
+    let mut scroll = app.dashboard.scroll.min(max_scroll);
+    if app.dashboard.follows_selection()
+        && let Some((start, height)) = selected_lines
+    {
+        scroll = scroll_for_selection(scroll, chunks[1].height, start, height).min(max_scroll);
     }
+    for target in targets {
+        register_visible_target(mouse_layout, chunks[1], target, scroll);
+    }
+    frame.render_widget(
+        Paragraph::new(header_lines).style(theme::normal()),
+        chunks[0],
+    );
     frame.render_widget(
         Paragraph::new(lines)
             .style(theme::normal())
             .scroll((scroll, 0)),
-        chunks[0],
+        chunks[1],
     );
     frame.render_widget(
-        Paragraph::new(dashboard_footer_lines(app, width)),
-        chunks[1],
+        Paragraph::new(dashboard_footer_lines(width, scroll, max_scroll)),
+        chunks[2],
     );
 
     if app.search_is_open() {
@@ -155,6 +185,19 @@ pub(super) fn render_dashboard(
 
 fn max_scroll(line_count: usize, visible_height: u16) -> u16 {
     line_count.saturating_sub(visible_height as usize) as u16
+}
+
+fn scroll_for_selection(current: u16, visible_height: u16, start: usize, height: usize) -> u16 {
+    let current = usize::from(current);
+    let visible_height = usize::from(visible_height);
+    if start < current {
+        return start.min(u16::MAX as usize) as u16;
+    }
+    let end = start.saturating_add(height);
+    if end > current.saturating_add(visible_height) {
+        return end.saturating_sub(visible_height).min(u16::MAX as usize) as u16;
+    }
+    current.min(u16::MAX as usize) as u16
 }
 
 fn register_visible_target(
@@ -186,40 +229,39 @@ fn register_visible_target(
     }
 }
 
-fn dashboard_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
-    let mut items = vec![FooterItem::new("tab", "switch view")];
-    if app.dashboard.active_section() == DashboardSection::AwaitingReview {
-        items.push(FooterItem::new("f", "review filter"));
-    }
-    items.extend([
-        FooterItem::new("j/k", "move"),
-        FooterItem::new("enter", "details"),
-        FooterItem::new("/", "search"),
-        FooterItem::new("t", "theme"),
-        FooterItem::new("c", "copy branch"),
-        FooterItem::new("b", "open in browser"),
-        FooterItem::new("o", "toggle group"),
-        FooterItem::new("n/p", "repo page"),
-        FooterItem::new("r", "refresh"),
+fn dashboard_footer_lines(width: usize, scroll: u16, max_scroll: u16) -> Vec<Line<'static>> {
+    let items = vec![
         FooterItem::new("q", "quit"),
-    ]);
-    if let Some(message) = app.status_message() {
-        items.push(FooterItem::new("status", message));
-    }
-    if app.is_mock() {
-        let mode = match app.mock_error_mode() {
-            Some(crate::github::MockErrorMode::GitHubDown) => "down",
-            Some(crate::github::MockErrorMode::Timeout) => "timeout",
-            Some(crate::github::MockErrorMode::Generic) => "error",
-            Some(crate::github::MockErrorMode::Auth) => "auth",
-            None => "ok",
-        };
-        items.extend([
-            FooterItem::new("mock", format!("[{mode}]")),
-            FooterItem::new("f1", "debug"),
-        ]);
-    }
-    footer_lines(width, items)
+        FooterItem::new("j/k", "move"),
+        FooterItem::new("enter", "open"),
+        FooterItem::new("/", "search"),
+        FooterItem::new("?", "help"),
+    ];
+    let mut lines = footer_lines(width, items);
+    lines[0] = overflow_hint_rule(width, scroll > 0, scroll < max_scroll);
+    lines
+}
+
+fn overflow_hint_rule(width: usize, more_above: bool, more_below: bool) -> Line<'static> {
+    let hint = match (more_above, more_below) {
+        (true, true) => " ↑/↓ more ",
+        (true, false) => " ↑ more ",
+        (false, true) => " ↓ more ",
+        (false, false) => return rule_line(width),
+    };
+    let hint_width = display_width(hint).min(width);
+    let left_width = width.saturating_sub(hint_width) / 2;
+    let right_width = width.saturating_sub(left_width + hint_width);
+    Line::from(vec![
+        Span::styled("━".repeat(left_width), theme::rule()),
+        Span::styled(
+            truncate(hint, hint_width),
+            theme::accent()
+                .add_modifier(Modifier::BOLD)
+                .patch(theme::selection()),
+        ),
+        Span::styled("━".repeat(right_width), theme::rule()),
+    ])
 }
 
 fn render_search_overlay(
@@ -228,11 +270,11 @@ fn render_search_overlay(
     mouse_layout: &mut MouseLayout,
 ) {
     let area = frame.area();
-    if area.width < 8 || area.height < 3 {
+    if area.width < 40 || area.height < 9 {
         return;
     }
 
-    let width = ((area.width as f32 * 0.7) as u16).clamp(8, area.width);
+    let width = ((area.width as f32 * 0.7) as u16).clamp(40, area.width);
     let height = area.height.saturating_sub(2).clamp(3, 12);
     let popup = Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
@@ -258,7 +300,7 @@ fn render_search_overlay(
     ]));
     lines.push(rule_line(inner_width));
 
-    let match_rows = popup.height.saturating_sub(5) as usize;
+    let match_rows = popup.height.saturating_sub(6) as usize;
     if match_rows > 0 {
         if matches.is_empty() {
             lines.push(Line::from(vec![
@@ -289,14 +331,18 @@ fn render_search_overlay(
     }
 
     lines.push(rule_line(inner_width));
-    lines.push(Line::from(vec![
-        Span::styled("enter", theme::muted_key()),
-        Span::styled(" open  ", theme::muted()),
-        Span::styled("esc", theme::muted_key()),
-        Span::styled(" close  ", theme::muted()),
-        Span::styled("↑/↓ ctrl-p/n", theme::muted_key()),
-        Span::styled(" move", theme::muted()),
-    ]));
+    lines.push(
+        footer_lines(
+            inner_width,
+            vec![
+                FooterItem::new("enter", "open"),
+                FooterItem::new("esc", "close"),
+                FooterItem::new("↑/↓", "move"),
+            ],
+        )
+        .pop()
+        .expect("footer always contains a controls line"),
+    );
 
     frame.render_widget(Clear, popup);
     frame.render_widget(
@@ -304,7 +350,7 @@ fn render_search_overlay(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(theme::rule()),
+                    .border_style(theme::focus_rule()),
             )
             .style(theme::background()),
         popup,
@@ -320,18 +366,41 @@ fn search_match_line(
     let gutter = if selected { "▸" } else { " " };
     let status = pr_status(&item.pr);
     let left = format!("{} #{} {}", item.pr.repo, item.pr.number, item.pr.title);
-    let branch = truncate(&branch_label(&item.pr.head_ref, nerd_fonts), 24);
-    let right = format!("{}  {}", status, item.section.title());
-    let right_width = right.chars().count().min(width.saturating_sub(4));
+    let memberships = item
+        .sections
+        .iter()
+        .map(|section| section.title())
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let (branch, right, right_style) = if let Some(reason) = &item.match_reason {
+        (
+            String::new(),
+            format!("{} {}", reason.label, reason.value),
+            theme::muted_key(),
+        )
+    } else {
+        (
+            truncate(&branch_label(&item.pr.head_ref, nerd_fonts), 24),
+            format!("{status}  {memberships}"),
+            status_style(&status),
+        )
+    };
+    let right = truncate(&right, (width / 3).max(1));
+    let right_width = display_width(&right);
+    let branch = if width >= 48 {
+        truncate(&branch, (width / 4).min(24))
+    } else {
+        String::new()
+    };
     let branch_width = if branch.is_empty() {
         0
     } else {
-        branch.chars().count() + 1
+        display_width(&branch) + 1
     };
     let left_width = width.saturating_sub(right_width + branch_width + 4).max(1);
     let left = truncate(&left, left_width);
     let padding = width
-        .saturating_sub(2 + left.chars().count() + branch_width + right_width)
+        .saturating_sub(2 + display_width(&left) + branch_width + right_width)
         .max(1);
 
     Line::from(vec![
@@ -348,7 +417,7 @@ fn search_match_line(
         Span::raw(if branch.is_empty() { "" } else { " " }),
         Span::styled(branch, theme::branch()),
         Span::raw(" ".repeat(padding)),
-        Span::styled(truncate(&right, right_width), status_style(&status)),
+        Span::styled(truncate(&right, right_width), right_style),
     ])
 }
 
@@ -362,35 +431,49 @@ fn branch_label(head_ref: &str, nerd_fonts: bool) -> String {
     }
 }
 
-fn render_dashboard_error(frame: &mut ratatui::Frame<'_>, page: &DashboardErrorPage) {
+fn render_dashboard_error(
+    frame: &mut ratatui::Frame<'_>,
+    page: &DashboardErrorPage,
+    mouse_layout: &mut MouseLayout,
+) {
     let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .split(area);
     let mut lines = Vec::new();
-    for art_line in &page.art {
-        lines.push(Line::styled(art_line.clone(), theme::muted()));
+    let art_height = page.art.len() + usize::from(!page.art.is_empty() && !page.lines.is_empty());
+    if art_height + page.lines.len() <= chunks[0].height as usize {
+        for art_line in &page.art {
+            lines.push(Line::styled(art_line.clone(), theme::muted()));
+        }
+        if !page.art.is_empty() && !page.lines.is_empty() {
+            lines.push(Line::raw(""));
+        }
     }
-    if !page.art.is_empty() && !page.lines.is_empty() {
-        lines.push(Line::raw(""));
-    }
-    for line in &page.lines {
+    for (index, line) in page.lines.iter().enumerate() {
         lines.push(match line {
-            DashboardErrorLine::Text(text) => Line::styled(text.clone(), theme::muted()),
+            DashboardErrorLine::Text(text) if index == 0 => {
+                Line::styled(text.clone(), theme::danger().add_modifier(Modifier::BOLD))
+            }
+            DashboardErrorLine::Text(text) => Line::styled(text.clone(), theme::normal()),
             DashboardErrorLine::StatusPage => Line::from(vec![
-                Span::styled("Check ", theme::muted()),
+                Span::styled("Check ", theme::normal()),
                 Span::styled(
                     "https://www.githubstatus.com/",
                     theme::accent().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" and press r to retry.", theme::muted()),
+                Span::styled(" and press r to retry.", theme::normal()),
             ]),
         });
     }
 
-    let height = lines.len().min(area.height as usize) as u16;
-    let top = area.y + area.height.saturating_sub(height) / 2;
+    let height = lines.len().min(chunks[0].height as usize) as u16;
+    let top = chunks[0].y + chunks[0].height.saturating_sub(height) / 2;
     let centered = Rect {
-        x: area.x,
+        x: chunks[0].x,
         y: top,
-        width: area.width,
+        width: chunks[0].width,
         height,
     };
     frame.render_widget(
@@ -399,6 +482,19 @@ fn render_dashboard_error(frame: &mut ratatui::Frame<'_>, page: &DashboardErrorP
             .alignment(Alignment::Center),
         centered,
     );
+    frame.render_widget(
+        Paragraph::new(footer_lines(
+            area.width as usize,
+            vec![FooterItem::new("r", "retry"), FooterItem::new("q", "quit")],
+        )),
+        chunks[1],
+    );
+    if chunks[1].height >= 2 {
+        mouse_layout.push(
+            Rect::new(chunks[1].x, chunks[1].y + 1, 7.min(chunks[1].width), 1),
+            MouseTarget::DashboardRetry,
+        );
+    }
 }
 
 fn render_dashboard_loading(frame: &mut ratatui::Frame<'_>, loading_frame: usize) {
@@ -474,6 +570,22 @@ fn review_scope_placements(app: &App, width: usize) -> Vec<(ReviewScope, String,
         .sum::<usize>()
         + REVIEW_SCOPE_GAP * labels.len().saturating_sub(1);
     if dashboard_views_width(app) + DASHBOARD_VIEW_GAP + scopes_width > width {
+        let scope = app.dashboard.review_scope();
+        let count = match scope {
+            ReviewScope::All => all,
+            ReviewScope::Direct => direct,
+            ReviewScope::Team => team,
+        };
+        let name = match scope {
+            ReviewScope::All => "all",
+            ReviewScope::Direct => "direct",
+            ReviewScope::Team => "team",
+        };
+        let label = format!("{name} [{count}]");
+        let minimum_x = dashboard_views_width(app) + 1;
+        if minimum_x + display_width(&label) <= width {
+            return vec![(scope, label.clone(), width - display_width(&label))];
+        }
         return Vec::new();
     }
 
@@ -513,39 +625,65 @@ pub(super) fn group_line(
     open: bool,
     page: usize,
     page_count: usize,
+    width: usize,
 ) -> Line<'static> {
     let marker = if open { "▾" } else { "▸" };
     let gutter = if selected { "▸" } else { " " };
+    if width < 4 {
+        return Line::from(vec![
+            Span::styled(gutter, selected_style()),
+            Span::styled(
+                truncate(&repo_display_name(repo), width.saturating_sub(1)),
+                theme::normal().add_modifier(Modifier::BOLD),
+            ),
+        ]);
+    }
     let pr_label = if count == 1 { "PR" } else { "PRs" };
-    let page_label = if page_count > 1 {
+    let page_label = if page_count > 1 && width >= 30 {
         format!("   page {page}/{page_count}")
     } else {
         String::new()
     };
 
+    let count_label = if width >= 16 {
+        format!("   [{count} {pr_label}]")
+    } else {
+        String::new()
+    };
+    let repo_width =
+        width.saturating_sub(4 + display_width(&count_label) + display_width(&page_label));
     Line::from(vec![
         Span::styled(gutter, selected_style()),
         Span::raw(" "),
         Span::styled(marker, theme::muted()),
         Span::raw(" "),
         Span::styled(
-            repo_display_name(repo),
+            truncate(&repo_display_name(repo), repo_width),
             theme::normal().add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("   [{count} {pr_label}]"), theme::muted()),
+        Span::styled(count_label, theme::muted()),
         Span::styled(page_label, theme::accent()),
     ])
 }
 
 fn repo_display_name(repo: &str) -> String {
-    repo.rsplit_once('/')
-        .map(|(_, name)| name)
-        .unwrap_or(repo)
-        .to_owned()
+    repo.to_owned()
 }
 
 pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'static> {
     let gutter = if selected { "▸" } else { " " };
+    if width < 8 {
+        return Line::from(vec![
+            Span::styled(gutter, selected_style()),
+            Span::styled(
+                truncate(
+                    &format!("#{} {}", pr.number, pr.title),
+                    width.saturating_sub(1),
+                ),
+                theme::normal(),
+            ),
+        ]);
+    }
     let dot = if selected { "●" } else { "○" };
     let status = pr_status(pr);
     let title = format!("#{} {}", pr.number, pr.title);
@@ -557,60 +695,80 @@ pub(super) fn pr_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'s
     } else {
         theme::muted()
     };
-    let ci_text = ci_text(pr.check_status.as_ref());
-    let status_width = 17;
+    let ci_text = truncate(&ci_text(pr.check_status.as_ref()), 4);
     let indent = "    ";
-    let right_width = 12;
-    let fixed_left_width = 2 + indent.len() + 2 + status_width + 1;
-    let available_title_width = width.saturating_sub(fixed_left_width + right_width).max(1);
+    let show_status = width >= 52;
+    let show_age = width >= 52;
+    let show_ci = width >= 20;
+    let status_block_width = usize::from(show_status) * 18;
+    let right_width = usize::from(show_age) * 9 + if show_ci { display_width(&ci_text) } else { 0 };
+    let fixed_left_width = 2 + indent.len() + 2 + status_block_width;
+    let available_title_width = width.saturating_sub(fixed_left_width + right_width);
     let title = truncate(&title, available_title_width);
-    let left_width = fixed_left_width + title.chars().count();
-    let padding = width.saturating_sub(left_width + right_width).max(1);
+    let left_width = fixed_left_width + display_width(&title);
+    let padding = width.saturating_sub(left_width + right_width);
 
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(gutter, selected_style()),
         Span::raw(" "),
         Span::raw(indent),
         Span::styled(dot, selected_style()),
         Span::raw(" "),
-        Span::styled(
-            format!("{status:<status_width$}"),
+    ];
+    if show_status {
+        spans.push(Span::styled(
+            format!("{status:<17}"),
             status_style(&status).add_modifier(if selected {
                 Modifier::BOLD
             } else {
                 Modifier::empty()
             }),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            title,
-            theme::normal().add_modifier(if selected {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            }),
-        ),
-        Span::raw(" ".repeat(padding)),
-        Span::styled(format!("{age_text:>6}"), age_style),
-        Span::raw("   "),
-        Span::styled(ci_text, ci_style(pr.check_status.as_ref())),
-    ])
+        ));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled(
+        title,
+        theme::normal().add_modifier(if selected {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        }),
+    ));
+    spans.push(Span::raw(" ".repeat(padding)));
+    if show_age {
+        spans.push(Span::styled(format!("{age_text:>6}"), age_style));
+        spans.push(Span::raw("   "));
+    }
+    if show_ci {
+        spans.push(Span::styled(ci_text, ci_style(pr.check_status.as_ref())));
+    }
+    Line::from(spans)
 }
 
-pub(super) fn branch_line(selected: bool, pr: &PullRequest, nerd_fonts: bool) -> Line<'static> {
+pub(super) fn branch_line(
+    selected: bool,
+    pr: &PullRequest,
+    nerd_fonts: bool,
+    width: usize,
+) -> Line<'static> {
     let gutter = if selected { "│" } else { " " };
+    let indent_width = width.saturating_sub(1).min(7);
+    let indent = " ".repeat(indent_width);
     if pr.head_ref.is_empty() {
         return Line::from(vec![
             Span::styled(gutter, selected_style()),
-            Span::raw("       "),
+            Span::raw(indent),
         ]);
     }
 
     Line::from(vec![
         Span::styled(gutter, selected_style()),
-        Span::raw("       "),
+        Span::raw(indent),
         Span::styled(
-            branch_label(&pr.head_ref, nerd_fonts),
+            truncate(
+                &branch_label(&pr.head_ref, nerd_fonts),
+                width.saturating_sub(1 + indent_width),
+            ),
             theme::branch().add_modifier(if selected {
                 Modifier::BOLD
             } else {
@@ -620,103 +778,158 @@ pub(super) fn branch_line(selected: bool, pr: &PullRequest, nerd_fonts: bool) ->
     ])
 }
 
-pub(super) fn reviewers_line(selected: bool, pr: &PullRequest) -> Line<'static> {
+pub(super) fn reviewers_line(selected: bool, pr: &PullRequest, width: usize) -> Line<'static> {
     let gutter = if selected { "│" } else { " " };
-    let completed_reviewers: Vec<_> = pr
+    let indent_width = width.saturating_sub(1).min(7);
+    let indent = " ".repeat(indent_width);
+    let mut completed_reviewers: Vec<_> = pr
         .reviewers
         .iter()
         .filter(|reviewer| reviewer.state != crate::model::ReviewerState::Requested)
         .collect();
+    completed_reviewers.sort_by_key(|reviewer| reviewer_priority(reviewer.state));
     if pr.review_requested.is_empty() && completed_reviewers.is_empty() {
         return Line::from(vec![
             Span::styled(gutter, selected_style()),
-            Span::raw("       "),
-            Span::styled("no reviewers", theme::muted()),
+            Span::raw(indent),
+            Span::styled(
+                truncate("no reviewers", width.saturating_sub(1 + indent_width)),
+                theme::muted(),
+            ),
         ]);
     }
 
-    let mut spans = vec![Span::styled(gutter, selected_style()), Span::raw("       ")];
-    if !pr.review_requested.is_empty() {
-        spans.push(Span::styled("requested: ", theme::muted()));
-        for (index, target) in pr.review_requested.iter().enumerate() {
-            if index > 0 {
-                spans.push(Span::raw(", "));
+    let mut entries = completed_reviewers
+        .into_iter()
+        .map(|reviewer| ReviewerEntry {
+            label: format!("@{}", reviewer.login),
+            style: reviewer_style(reviewer.state),
+        })
+        .collect::<Vec<_>>();
+    entries.extend(pr.review_requested.iter().map(|target| {
+        let identity = match target {
+            crate::model::ReviewRequestTarget::User(login) => format!("@{login}"),
+            crate::model::ReviewRequestTarget::Team(team) if team.is_empty() => {
+                "@your-team".to_owned()
             }
-            let label = match target {
-                crate::model::ReviewRequestTarget::User(login) => format!("@{login}"),
-                crate::model::ReviewRequestTarget::Team(team) if team.is_empty() => {
-                    "your team".to_owned()
-                }
-                crate::model::ReviewRequestTarget::Team(team) => format!("@{team}"),
-            };
-            spans.push(Span::styled(label, theme::reviewer()));
+            crate::model::ReviewRequestTarget::Team(team) => format!("@{team}"),
+        };
+        ReviewerEntry {
+            label: identity,
+            style: reviewer_style(crate::model::ReviewerState::Requested),
         }
-    }
-    for (index, reviewer) in completed_reviewers.iter().enumerate() {
-        if index == 0 && !pr.review_requested.is_empty() {
-            spans.push(Span::raw("  "));
+    }));
+
+    let mut spans = vec![Span::styled(gutter, selected_style()), Span::raw(indent)];
+    let mut used = 1 + indent_width;
+    for (index, entry) in entries.iter().enumerate() {
+        let separator_width = usize::from(index > 0) * 2;
+        let remaining = entries.len().saturating_sub(index + 1);
+        let summary_width = if remaining > 0 {
+            2 + display_width(&format!("+{remaining}"))
+        } else {
+            0
+        };
+        let entry_width = display_width(&entry.label);
+        if used + separator_width + entry_width + summary_width > width {
+            push_reviewer_summary(&mut spans, &mut used, width, entries.len() - index);
+            break;
         }
         if index > 0 {
             spans.push(Span::raw("  "));
+            used += 2;
         }
-        spans.push(Span::styled(
-            format!("@{}", reviewer.login),
-            reviewer_style(reviewer.state),
-        ));
+        spans.push(Span::styled(entry.label.clone(), entry.style));
+        used += entry_width;
     }
 
     Line::from(spans)
 }
 
-pub(super) fn message_line(selected: bool, message: &str) -> Line<'static> {
+struct ReviewerEntry {
+    label: String,
+    style: ratatui::style::Style,
+}
+
+fn reviewer_priority(state: crate::model::ReviewerState) -> u8 {
+    match state {
+        crate::model::ReviewerState::Approved => 0,
+        crate::model::ReviewerState::ChangesRequested => 1,
+        crate::model::ReviewerState::Commented => 2,
+        crate::model::ReviewerState::Requested => 3,
+    }
+}
+
+fn push_reviewer_summary(
+    spans: &mut Vec<Span<'static>>,
+    used: &mut usize,
+    width: usize,
+    omitted: usize,
+) {
+    let label = format!("+{omitted}");
+    let separator = usize::from(spans.len() > 2) * 2;
+    if *used + separator + display_width(&label) <= width {
+        if separator > 0 {
+            spans.push(Span::raw("  "));
+            *used += separator;
+        }
+        spans.push(Span::styled(label, theme::muted_key()));
+    }
+}
+
+pub(super) fn message_line(selected: bool, message: &str, width: usize) -> Line<'static> {
     let gutter = if selected { "▸" } else { " " };
+    if width < 2 {
+        return Line::styled(truncate(gutter, width), selected_style());
+    }
     Line::from(vec![
         Span::styled(gutter, selected_style()),
         Span::raw(" "),
-        Span::styled(message.to_owned(), theme::muted()),
+        Span::styled(truncate(message, width.saturating_sub(2)), theme::muted()),
     ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::MockGhClient;
+    use crate::model::CheckStatus;
     use crate::model::ReviewerState;
 
     #[test]
-    fn mock_footer_links_to_debug_popup_without_listing_error_states() {
-        let app = App::with_default_config(Box::new(MockGhClient::new()));
-        let footer = dashboard_footer_lines(&app, 500)
+    fn dashboard_footer_keeps_a_small_static_command_set() {
+        let footer = dashboard_footer_lines(500, 0, 1)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join(" ");
 
-        assert!(footer.contains("f1 debug"));
-        assert!(!footer.contains("5 down"));
-        assert!(!footer.contains("6 timeout"));
-        assert!(!footer.contains("7 error"));
-        assert!(!footer.contains("8 auth"));
+        assert!(footer.contains("q quit"));
+        assert!(footer.contains("j/k move"));
+        assert!(footer.contains("enter open"));
+        assert!(footer.contains("/ search"));
+        assert!(footer.contains("? help"));
+        assert!(!footer.contains("toggle group"));
+        assert!(!footer.contains("copy branch"));
     }
 
     #[test]
     fn group_pr_and_message_lines_include_expected_text() {
         let pr = pr();
-        let group = group_line(true, "owner/repo", 2, true, 1, 1).to_string();
+        let group = group_line(true, "owner/repo", 2, true, 1, 1, 80).to_string();
         let pr_line = pr_line(true, &pr, 80).to_string();
-        let message = message_line(true, "No PRs").to_string();
+        let message = message_line(true, "No PRs", 80).to_string();
 
-        assert!(group.contains("repo"));
+        assert!(group.contains("owner/repo"));
         assert!(group.contains("2 PRs"));
         assert!(pr_line.contains("#1 Title"));
-        assert!(pr_line.contains("needs review"));
+        assert!(pr_line.contains("no decision"));
         assert!(message.contains("No PRs"));
     }
 
     #[test]
     fn group_line_uses_singular_pr_label() {
         assert!(
-            group_line(false, "owner/repo", 1, false, 1, 1)
+            group_line(false, "owner/repo", 1, false, 1, 1, 80)
                 .to_string()
                 .contains("1 PR")
         );
@@ -725,12 +938,12 @@ mod tests {
     #[test]
     fn group_line_shows_page_label_when_repo_has_multiple_pages() {
         assert!(
-            group_line(false, "owner/repo", 12, true, 2, 3)
+            group_line(false, "owner/repo", 12, true, 2, 3, 80)
                 .to_string()
                 .contains("page 2/3")
         );
         assert!(
-            !group_line(false, "owner/repo", 5, true, 1, 1)
+            !group_line(false, "owner/repo", 5, true, 1, 1, 80)
                 .to_string()
                 .contains("page")
         );
@@ -752,15 +965,56 @@ mod tests {
                 login: "carol".to_owned(),
                 state: ReviewerState::Requested,
             },
+            crate::model::Reviewer {
+                login: "dave".to_owned(),
+                state: ReviewerState::Commented,
+            },
         ];
         pr.review_requested = vec![crate::model::ReviewRequestTarget::User("carol".to_owned())];
 
-        let line = reviewers_line(false, &pr).to_string();
+        let line = reviewers_line(false, &pr, 80);
+        let text = line.to_string();
 
-        assert!(line.contains("@alice"));
-        assert!(line.contains("@bob"));
-        assert!(line.contains("@carol"));
-        assert!(!line.contains("you"));
+        assert!(text.contains("@alice"));
+        assert!(text.contains("@bob"));
+        assert!(text.contains("@carol"));
+        assert!(text.contains("@dave"));
+        assert!(text.find("@alice").unwrap() < text.find("@bob").unwrap());
+        assert!(text.find("@bob").unwrap() < text.find("@dave").unwrap());
+        assert!(text.find("@dave").unwrap() < text.find("@carol").unwrap());
+        assert!(!text.contains("you"));
+        assert_eq!(
+            line.spans
+                .iter()
+                .find(|span| span.content == "@alice")
+                .unwrap()
+                .style,
+            theme::success()
+        );
+        assert_eq!(
+            line.spans
+                .iter()
+                .find(|span| span.content == "@bob")
+                .unwrap()
+                .style,
+            theme::warning()
+        );
+        assert_eq!(
+            line.spans
+                .iter()
+                .find(|span| span.content == "@carol")
+                .unwrap()
+                .style,
+            theme::info()
+        );
+        assert_eq!(
+            line.spans
+                .iter()
+                .find(|span| span.content == "@dave")
+                .unwrap()
+                .style,
+            theme::muted()
+        );
     }
 
     #[test]
@@ -770,10 +1024,35 @@ mod tests {
             "owner/core-team".to_owned(),
         )];
 
-        let line = reviewers_line(false, &pr).to_string();
+        let line = reviewers_line(false, &pr, 80).to_string();
 
         assert!(line.contains("@owner/core-team"));
         assert!(!line.contains("no reviewers"));
+    }
+
+    #[test]
+    fn reviewer_line_summarizes_identities_that_do_not_fit() {
+        let mut pr = pr();
+        pr.reviewers = vec![
+            crate::model::Reviewer {
+                login: "approved-reviewer".to_owned(),
+                state: ReviewerState::Approved,
+            },
+            crate::model::Reviewer {
+                login: "changes-reviewer".to_owned(),
+                state: ReviewerState::ChangesRequested,
+            },
+            crate::model::Reviewer {
+                login: "comment-reviewer".to_owned(),
+                state: ReviewerState::Commented,
+            },
+        ];
+
+        let line = reviewers_line(false, &pr, 36).to_string();
+
+        assert!(line.contains("@approved-reviewer"));
+        assert!(line.contains("+2"));
+        assert!(display_width(&line) <= 36);
     }
 
     #[test]
@@ -782,6 +1061,100 @@ mod tests {
         pr.updated_at = "1970-01-01T00:00:00Z".to_owned();
 
         assert!(pr_line(false, &pr, 80).to_string().contains('!'));
+    }
+
+    #[test]
+    fn compact_rows_bound_long_user_controlled_text() {
+        let mut pr = pr();
+        pr.title = "A very long pull request title that cannot fit".to_owned();
+        pr.head_ref = "feature/with-a-very-long-branch-name".to_owned();
+        pr.check_status = Some(CheckStatus::Unknown("unexpected-provider-state".to_owned()));
+        pr.review_requested = vec![crate::model::ReviewRequestTarget::Team(
+            "owner/a-team-with-an-extremely-long-name".to_owned(),
+        )];
+
+        for width in [1, 4, 7, 12, 20, 40, 80] {
+            assert!(display_width(&pr_line(false, &pr, width).to_string()) <= width);
+            assert!(display_width(&branch_line(false, &pr, false, width).to_string()) <= width);
+            assert!(display_width(&reviewers_line(false, &pr, width).to_string()) <= width);
+            assert!(
+                display_width(
+                    &group_line(
+                        false,
+                        "owner/an-extremely-long-repository-name",
+                        123,
+                        true,
+                        12,
+                        30,
+                        width,
+                    )
+                    .to_string(),
+                ) <= width
+            );
+        }
+    }
+
+    #[test]
+    fn selection_scroll_reveals_complete_rows_only_when_needed() {
+        assert_eq!(scroll_for_selection(0, 8, 7, 3), 2);
+        assert_eq!(scroll_for_selection(5, 8, 3, 1), 3);
+        assert_eq!(scroll_for_selection(2, 8, 3, 3), 2);
+    }
+
+    #[test]
+    fn overflow_hint_is_centered_in_the_footer_rule() {
+        let line = overflow_hint_rule(40, false, true).to_string();
+        let hint_start = display_width(&line[..line.find("↓ more").unwrap()]);
+
+        assert!((17..=18).contains(&hint_start));
+        assert_eq!(display_width(&line), 40);
+        assert_eq!(
+            overflow_hint_rule(40, false, false).to_string(),
+            "━".repeat(40)
+        );
+    }
+
+    #[test]
+    fn search_result_shows_all_dashboard_memberships() {
+        let item = DashboardSearchMatch {
+            pr: pr(),
+            sections: vec![DashboardSection::MyPrs, DashboardSection::AwaitingReview],
+            match_reason: None,
+        };
+
+        let line = search_match_line(false, &item, 120, false).to_string();
+
+        assert!(line.contains("My PRs + Review Requests"));
+    }
+
+    #[test]
+    fn search_result_prioritizes_hidden_match_reason() {
+        let item = DashboardSearchMatch {
+            pr: pr(),
+            sections: vec![DashboardSection::MyPrs],
+            match_reason: Some(crate::app::SearchMatchReason {
+                label: "reviewer",
+                value: "@needle-reviewer".to_owned(),
+            }),
+        };
+
+        let line = search_match_line(false, &item, 100, false).to_string();
+
+        assert!(line.contains("reviewer @needle-reviewer"));
+        assert!(!line.contains("branch:"));
+    }
+
+    #[test]
+    fn search_results_stay_within_narrow_popup_width() {
+        let mut item = DashboardSearchMatch {
+            pr: pr(),
+            sections: vec![DashboardSection::MyPrs, DashboardSection::AwaitingReview],
+            match_reason: None,
+        };
+        item.pr.title = "A title that is much too long for the popup".to_owned();
+        item.pr.head_ref = "feature/a-very-long-branch-name".to_owned();
+
+        assert!(display_width(&search_match_line(false, &item, 36, false).to_string()) <= 36);
     }
 
     fn pr() -> PullRequest {

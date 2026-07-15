@@ -1,0 +1,421 @@
+# gh-view Design System
+
+This document defines the product language and interaction rules for gh-view's terminal UI. It describes the current design, records known inconsistencies, and guides incremental improvements. Source code and tests remain the behavioral source of truth.
+
+The system is intentionally small. It is a set of shared decisions, not a component framework. New abstractions should be introduced only when repeated behavior cannot stay consistent otherwise.
+
+## Product Principles
+
+1. **Terminal native.** Use a flat, full-screen layout, quiet rules, whitespace, and indentation. Boxes are reserved for modal overlays, not ordinary page structure.
+2. **Simple before dense.** Show the information needed to choose the next action. Remove secondary metadata before compressing essential content into noise.
+3. **Predictable hierarchy.** The same kind of information appears in the same order, notation, and style across views.
+4. **Readable without color.** Text, position, symbols, and modifiers communicate aggregate and actionable state. Color reinforces meaning; individual reviewer outcomes are the documented compact exception.
+5. **Stable under pressure.** Long GitHub data and small terminals degrade deliberately. User-controlled text must not displace essential navigation or status.
+6. **Stable interaction.** Keep a small footer command set fixed within each view. Put complete, contextual shortcut documentation behind `?` instead of changing footer geometry with selection.
+7. **Small implementation surface.** Prefer formatting helpers and explicit width budgets over a general widget or token framework.
+
+## Visual Principles
+
+- Keep the background visually continuous across each page.
+- Use horizontal and vertical rules to separate regions without creating nested panels.
+- Keep rows compact and repository groups easy to scan.
+- Use accent sparingly for identity, primary navigation, selection, and focus.
+- Avoid decorative icons when a short textual label is clearer.
+- Preserve terminal conventions: uppercase section labels, lowercase controls, monospace alignment, and mnemonic keys.
+
+## Information Hierarchy
+
+From strongest to quietest:
+
+1. Application identity, selected item, active primary view, and focused pane.
+2. PR title and number, repository, actionable status, and blocking errors.
+3. Review/CI state, author or reviewer identity, branch, age, and navigation position.
+4. Help text, inactive controls, descriptions, and decorative separators.
+
+Primary navigation is uppercase and accent-emphasized: `MY PRS [2]`, `REVIEW REQUESTS [7]`, `DESCRIPTION`, and `DISCUSSION`. Secondary controls are lowercase and muted: `all [7]`, `direct [6]`, `team [2]`, and footer labels. An active secondary control may add restrained bold and underline; it must not compete with primary navigation.
+
+## Spacing And Indentation
+
+- Use one blank column between a gutter marker and row content.
+- Repository rows begin at the page hierarchy level.
+- PR rows are indented four columns beneath a repository row.
+- PR continuation lines align beneath the PR's primary content, not beneath the selection gutter.
+- Use two spaces between related metadata fields.
+- Use three spaces between distinct footer controls and between right-side metadata groups.
+- Use one quiet rule between major regions. Do not add blank rows merely to simulate cards.
+- Overlay borders consume one cell on every side; calculate content from the resulting inner rectangle.
+- Mouse regions use the exact rendered row and column geometry. They must not be inferred independently from domain indexes or fixed screen coordinates.
+
+Spacing is a hierarchy tool, not decoration. At narrow widths, remove an entire lower-priority field before reducing meaningful separation around the remaining fields.
+
+## Typography And Modifiers
+
+Terminal typography means text case, weight, underline, and symbols rather than font families.
+
+- Uppercase: application identity and primary section labels.
+- Lowercase: statuses, filters, metadata labels, and control descriptions.
+- Bold: selected row text, active primary navigation, focused section headers, and exceptional warnings.
+- Underline: restrained active-state reinforcement for secondary controls; never the only active cue.
+- Dim or muted color: secondary information, not critical instructions or errors.
+- Selection markers: `▸` for the selected row and `│` on its continuation lines.
+- Expansion markers: `▾` expanded and `▸` collapsed.
+- Ellipsis: `…` indicates terminal-width truncation or pending CI. Truncated text must fit the requested display-cell width.
+
+Do not use blinking text. Do not rely on italics because terminal support varies. Bold and underline must remain understandable when a terminal ignores either modifier.
+
+## Semantic Color Roles
+
+Render code refers to semantic roles, never literal palette values.
+
+| Role | Meaning | Typical use |
+| --- | --- | --- |
+| `background` | Page and overlay surface | Full terminal, cleared modal |
+| `normal` | Primary readable text | Titles, body, repository |
+| `muted` | Secondary noncritical text | Labels, ages, inactive navigation |
+| `muted_key` | Discoverable control or metadata key | Footer keys, file paths |
+| `accent` | Product identity and active navigation | `GH-VIEW`, active tab, selection marker |
+| `rule` | Nonessential separation | Unfocused horizontal/vertical rules |
+| `focus_rule` | Meaningful focus or modal boundary | Active detail pane, overlay border |
+| `selection` | Popup/list selection surface | Theme picker and overlay rows only |
+| `success` | Successful state | Approved, passing CI, added diff |
+| `info` | Neutral actionable state | Needs review, merged state |
+| `warning` | Attention without failure | Changes requested, stale age, pending CI |
+| `danger` | Failure or destructive state | Failed CI, load failure, removed diff |
+| `reviewer` | GitHub identity | Users and teams |
+| `branch` | Git references | Head/base branch names |
+
+Every palette defines an intentional background. Informational text should target at least 4.5:1 contrast against that background; meaningful focus boundaries should target at least 3:1. Quiet rules may be lower contrast only when structure remains understandable without them. Selection must preserve readable foregrounds for every role rendered on it.
+
+## Notation
+
+### Identity
+
+- GitHub users and teams use `@identity`: `@octocat`, `@owner/core-team`.
+- Repository identity uses `owner/repo` where ambiguity is possible. A short `repo` name may be used only when the owner is already clear or space requires it.
+- PR identity uses `#42`; repository-qualified identity uses `owner/repo #42`.
+- Branches use `branch: feature/name` unless Nerd Font mode replaces only the `branch:` prefix.
+
+### Counts And Position
+
+- Quantities use square brackets: `MY PRS [2]`, `all [7]`, `[6 PRs]`.
+- Include the noun when the surrounding label does not establish it: `[1 PR]`, `[6 PRs]`.
+- Fractions represent navigation position, never quantities: `page 1/2`, discussion `1/4`.
+- A filtered count must say what it counts. Counts from overlapping categories must not imply that their sum equals the total.
+
+### Status
+
+- Status text is lowercase: `approved`, `needs review`, `changes requested`, `draft`, `no decision`.
+- CI uses a textual prefix and non-color symbol: `ci✓`, `ci×`, `ci…`, `ci-`.
+- Stale age uses both a symbol and color: `!12d`.
+- Review resolution is explicit: `thread · resolved`, `thread · unresolved`.
+- Loading, empty, error, and degraded states use concise sentences, not bare placeholders such as `none`.
+
+### Metadata
+
+- Labels use lowercase followed by a colon: `review:`, `branch:`, `state:`, `merge:`.
+- Use `requested` for a request attached to an identity. Reserve `needs review` for an aggregate PR status once its exact semantic definition is settled.
+- Prefer `open PR` over ambiguous `open in browser` when the destination is the PR rather than a selected discussion item.
+
+## Selection, Focus, And Active State
+
+### Dashboard
+
+- Selection uses an accent gutter marker and optional bold text.
+- Dashboard rows never use a selection background.
+- Continuation lines use a vertical gutter so a three-line PR remains one selected object.
+- Repository expansion and selected-row state are separate signals.
+
+### Detail
+
+- The active pane has a focus rule and stronger section heading.
+- Focus must have a structural cue in addition to color. A future focus marker may be added if palette validation shows the rule is insufficient.
+- Code-line highlighting may use the selection background because it is a local selected subregion, not a dashboard row.
+
+### Overlays
+
+- Search and theme picker are modal overlays with a visible focus border.
+- Popup/list selection may use the semantic selection background and should retain a gutter marker.
+- Underlying mouse regions may remain stored, but modal input handling must prevent their activation.
+
+## Responsive Priorities
+
+Width is allocated in this order.
+
+### Dashboard PR Row
+
+1. Selection gutter and PR number/title.
+2. Compact CI state.
+3. Aggregate review status.
+4. Age.
+5. Branch and reviewer continuation metadata.
+
+At wide widths, age and CI remain right aligned. Unknown or external status strings are truncated before they can move columns. At narrow widths, omit age and aggregate status before truncating the PR identity to nothing.
+
+### Repository Row
+
+1. Selection and expansion markers.
+2. Repository name.
+3. PR quantity.
+4. Page fraction.
+
+Truncate repository names with an ellipsis. Omit page metadata and then quantity if they cannot coexist with a useful repository label.
+
+### Detail
+
+1. Back path and PR identity.
+2. PR title.
+3. author, review, and CI.
+4. branch, state, and mergeability.
+5. description/discussion body and code context.
+
+Long titles, repositories, branches, usernames, team names, reviewers, file paths, errors, and body tokens require explicit display-cell budgets. Clipping by the terminal is not a truncation strategy.
+
+### Footer
+
+Each view has a fixed minimal footer. Dashboard shows quit, movement, open, search, and help; detail shows back, scroll, focus, discussion navigation, and help. Selection changes never alter footer contents. Controls that do not fit are omitted as complete key-label pairs, and `?` opens the complete context-specific keyboard reference.
+
+### Tiny Terminals
+
+- Remove decorative art and secondary metadata first.
+- Keep at least one visible line explaining the current mode.
+- Do not allow an invisible modal to retain keyboard focus.
+- If essential interaction cannot fit, show a concise `Terminal too small` state with the minimum useful dimensions.
+
+## Interaction Rules
+
+### Keyboard
+
+- Shortcuts are mnemonic where possible: `/` search, `t` theme, `f` filter, `r` refresh, `b` browser, `c` copy.
+- `j`/`k` and arrow keys move or scroll consistently.
+- `n`/`p` and left/right move through peer items or pages.
+- `enter` activates the selected item.
+- `esc` exits the current mode; on the dashboard it quits.
+- `q` exits or goes back where documented.
+- `?` opens the complete shortcut popup for the current view; `?`, `esc`, or `q` closes it.
+- Modal input takes precedence over page shortcuts.
+- Every shortcut appears in the README and context-specific help popup. The footer is a stable subset, not the complete reference.
+
+### Mouse
+
+- Hit targets are produced during rendering from final rectangles and visible rows.
+- Scrolling, clipping, overlay position, and terminal origin are reflected in hit geometry.
+- Targets never extend into footer or border cells unless those cells visibly represent the action.
+- Later modal regions take precedence over underlying page regions.
+- Keyboard behavior remains complete; mouse input is an alternative, not a requirement.
+
+## Component Inventory
+
+This inventory names recurring presentations without requiring component objects.
+
+| Component | Example | Rules |
+| --- | --- | --- |
+| App header | `GH-VIEW  @octocat` | Accent product name, muted identity, optional right notice; remains fixed above dashboard rows |
+| Primary navigation | `1 MY PRS [2]    2 REVIEW REQUESTS [7]` | Uppercase, accent active item, exact clickable label geometry; remains fixed with the dashboard header |
+| Secondary filter | `all [7]   direct [6]   team [2]` | Lowercase, muted, active emphasis; compact active fallback on narrow widths |
+| Repository row | `▾ owner/repo   [6 PRs]   page 1/2` | Bold repository, bracketed quantity, fractional page position |
+| PR row | `needs review  #42 Fix parser   !12d   ci×` | Three-line compact unit; title truncates; age/CI align when present |
+| Identity list | `@octocat  @owner/core` | Every user/team is prefixed with `@`; outcome uses semantic color and approved-first ordering |
+| Section header | `DESCRIPTION`, `DISCUSSION  1/4` | Uppercase label; navigation fraction remains unbracketed |
+| Footer | `q quit   j/k move   enter open   / search   ? help` | Fixed per view, lowercase and muted; centered overflow hint overlays the rule above |
+| Shortcut help | `Dashboard shortcuts` | Modal `?` reference containing every keyboard action for the current view |
+| Search overlay | `Search PRs  / parser` | Modal focus border, visible query, bounded result rows and footer |
+| Theme picker | `▸ Tokyo Night  clean neon city contrast` | Live preview, popup selection background, save/cancel hints |
+| Loading state | `Loading PRs...` | Name the region being loaded; animation is supplementary |
+| Empty state | `No direct review requests.` | State the empty scope; do not duplicate messages |
+| Error state | `GitHub CLI is not authenticated.` | Problem first, action second, technical detail last |
+
+## State Language
+
+### Loading
+
+- Initial dashboard load may replace the page with `Loading PRs...`.
+- Independent detail and discussion loads should identify their region.
+- Animation is not sufficient text by itself.
+
+### Empty
+
+- Empty text names the active scope: `No PRs opened by you.`, `No review requests.`, `No direct review requests.`, or `No team review requests.`
+- Do not show both a section placeholder and a global empty message.
+
+### Error
+
+- Put the failure before decorative art or secondary detail.
+- Provide the next action: install/authenticate `gh`, check GitHub status, or press `r` to retry.
+- Use danger or warning emphasis for the concise problem and normal text for remediation.
+
+### Degraded
+
+- When stale dashboard data remains after a refresh failure, keep it understandable as stale and surface the error.
+- When optional review-thread context fails, retain available PR detail and issue comments and identify the failed region once.
+- Unknown GitHub values are bounded and displayed as unknown rather than breaking alignment.
+
+## Accessibility And No-Color Requirements
+
+- Selection, focus, stale age, CI state, diff kind, and resolution must each have a text, symbol, or structural cue.
+- Individual reviewer outcomes are the deliberate color-only exception: approved uses `success`, changes requested uses `warning`, requested uses `info`, and commented uses `muted`. The aggregate PR review status remains textual and understandable without color.
+- Instructions and errors may not use a low-contrast decorative role.
+- Validate dark and light palettes independently, including text rendered on selection backgrounds.
+- Use Unicode display-cell width for fitting. Do not assume one Rust `char` equals one terminal cell.
+- Symbols must have an ASCII or textual interpretation. Nerd Font glyphs remain opt-in.
+- The application must remain operable with keyboard only and understandable in monochrome.
+
+## Terminology
+
+Use these terms consistently in UI, README, tests, and documentation:
+
+| Concept | Preferred term |
+| --- | --- |
+| PRs authored by the current user | `My PRs` / `opened by you` |
+| PRs with a user or team review request | `Review Requests` |
+| Request attached directly to current user | `direct review request` |
+| Request attached to a team | `team review request` |
+| All/direct/team selector | `review filter` |
+| GitHub user or team | `identity` generically, `user` or `team` specifically |
+| Browser action targeting PR | `open PR` |
+| Repository pagination | `repo page` |
+| Discussion item navigation | `discussion` |
+
+Avoid using `requested`, `needs review`, and `review requests` interchangeably. `requested` describes a concrete GitHub request; aggregate status and dashboard membership require explicit definitions.
+
+## Current Audit
+
+### Consistent Today
+
+- Dashboard and detail pages use a flat layout with quiet rules.
+- Dashboard selection uses a gutter rather than a row background.
+- Theme picker selection uses a popup background and gutter.
+- Primary navigation is uppercase; secondary controls are lowercase and muted.
+- User and team labels generally use `@identity`.
+- Section, filter, and repository quantities use square brackets; page/discussion positions use fractions.
+- CI, stale age, diff kind, and thread resolution have non-color cues.
+- Mouse targets are created from rendered geometry and clipped to the visible dashboard viewport.
+- Search includes loaded PRs hidden by collapsed groups without making network calls.
+
+### Corrected In The Initial Consistency Pass
+
+- Truncation handles zero width and Unicode terminal-cell width.
+- Dashboard rows bound long titles, repository names, branches, unknown CI text, and messages.
+- Narrow PR rows remove secondary status/age before PR identity and compact CI.
+- Footer controls are stable per view, prioritized, and emitted only as whole pairs that fit; complete shortcuts live behind `?`.
+- Narrow review-request layouts preserve the active filter when the full filter set does not fit.
+- Empty states name the active view/filter and no longer duplicate a global message.
+- Search result capacity accounts for borders and fixed content; search uses a focus-level modal border.
+- Detail title/repository and code-context paths are bounded.
+- Theme names are truncated before column padding.
+
+### Remaining Gaps
+
+- Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
+- Theme picker selection does not scroll independently if the theme list later grows beyond its minimum-height popup.
+- There is no broad visual regression suite; current render tests focus mainly on mouse geometry.
+
+## Accepted Decisions
+
+These decisions resolve the initial design audit. Options remain recorded to preserve the tradeoffs and rationale behind current behavior.
+
+### 1. Review Requests Count
+
+- Option A: keep the primary count as total loaded PRs.
+- Option B: show the active filtered count.
+- Option C: show `[filtered/total]`.
+- **Accepted:** Option B. The primary count shows the active filtered collection. The adjacent filter gives total/direct/team counts, and fractions remain reserved for navigation state.
+
+### 2. Direct And Team Overlap
+
+- Option A: retain overlapping categories and document that a PR may appear in both.
+- Option B: make `team` mean team-only, excluding direct requests.
+- Option C: replace filters with explicit inclusive labels such as `direct [6]` and `via team [2]` plus an overlap hint.
+- **Accepted:** Option A. Direct and team remain overlapping GitHub relationships, and the README explains that their counts are not additive.
+
+### 3. Primary Review Terminology
+
+- Option A: retain `Awaiting Review`.
+- Option B: use `Review Requests`.
+- Option C: use `Needs Your Review`.
+- **Accepted:** Option B. The user-facing view is named `Review Requests`, matching the loaded GitHub relationship without claiming that every listed PR still needs action.
+
+### 4. Aggregate `needs review`
+
+- Option A: use it whenever a non-draft PR is not approved or changes-requested.
+- Option B: use it only for GitHub `REVIEW_REQUIRED`.
+- Option C: derive it from outstanding direct/team reviewer requests.
+- **Accepted:** Option B. `needs review` is reserved for GitHub `REVIEW_REQUIRED`; an absent decision is shown as `no decision` rather than inferred from incomplete reviewer data.
+
+### 5. Global Search And Duplicates
+
+- Option A: preserve one result per section.
+- Option B: deduplicate by `owner/repo #number` and show all memberships.
+- Option C: search only the active view/filter.
+- **Accepted:** Option B. Global search deduplicates by `owner/repo #number` and displays every dashboard membership on the unified result.
+
+### 6. Search Result Scope
+
+- Option A: opening a result preserves the active filter even if the PR is excluded from it.
+- Option B: switch Review Requests to `all` when needed.
+- Option C: keep the scope and show a temporary explanation on return.
+- **Accepted:** Option B. Opening a review-request result that the active direct/team filter hides switches the view to `all`, so returning shows the opened PR.
+
+### 7. Dashboard Mouse Activation
+
+- Option A: retain select-first, click-selected-to-activate behavior.
+- Option B: single-click activates rows immediately.
+- Option C: single-click selects and a true timed double-click activates.
+- **Accepted:** Option A. Dashboard rows select on the first click and activate when the selected row is clicked again; search results remain single-click actions.
+
+### 8. Refresh Presentation
+
+- Option A: every refresh uses the full loading page.
+- Option B: only initial load is full-screen; refresh keeps stale rows and shows progress.
+- **Accepted:** Option B. Only initial load is full-screen; later refreshes retain current rows and show progress or classified failure feedback in the header.
+
+### 9. Detail Browser Action
+
+- Option A: `b` always opens the PR and is labeled `open PR`.
+- Option B: `b` opens the selected discussion URL when discussion is focused.
+- Option C: provide separate PR and discussion shortcuts.
+- **Accepted:** Option A. `b` always opens the PR and is labeled `open PR`, regardless of focused detail pane or discussion selection.
+
+### 10. Detail Narrow Layout
+
+- Option A: retain side-by-side discussion and code context at all widths.
+- Option B: stack code context below discussion.
+- Option C: hide code context below a breakpoint and expose a toggle.
+- **Accepted:** Option B. Below 96 columns, discussion stacks above code context; wider detail views retain the side-by-side presentation.
+
+### 11. Tiny-Terminal Policy
+
+- Option A: progressively strip content with no hard minimum.
+- Option B: show `Terminal too small` below a documented minimum.
+- **Accepted:** Option B. Undersized surfaces show `Terminal too small` with their requirement: dashboard `40x10`, detail `40x24`, search `40x9`, theme picker `40x15`, and mock debug `40x11`.
+
+### 12. Palette Contrast Target
+
+- Option A: require 4.5:1 for all informational text and 3:1 for focus boundaries.
+- Option B: permit lower contrast for secondary text.
+- **Accepted:** Option A. Informational roles are validated at 4.5:1 and meaningful focus boundaries at 3:1 against page and applicable selection backgrounds; quiet nonessential rules remain exempt.
+
+### 13. Error-Page Controls
+
+- Option A: instructions in the error body are sufficient.
+- Option B: retain a minimal `r retry   q quit` footer and mouse retry target.
+- **Accepted:** Option B. Full-page errors retain an `r retry   q quit` footer with an exact mouse retry target, and decorative art is omitted before remediation when height is constrained.
+
+## Implementation Roadmap
+
+### P1: Responsive Consistency
+
+1. Give detail metadata explicit field priorities and display-cell budgets.
+2. Add theme-picker list scrolling if the available theme list outgrows the minimum popup.
+3. Keep the tail/cursor of long search queries visible.
+
+### P2: Identity And Terminology
+
+1. Keep filter-count terminology aligned with GitHub relationship semantics.
+2. Keep documented mouse behavior aligned with input tests.
+3. Keep browser destination labels explicit when adding future actions.
+
+### P3: Regression Coverage
+
+1. Expand Ratatui `TestBackend` coverage for additional detail loading/error combinations.
+2. Test exact rendered mouse geometry after resize and nonzero origins.
+3. Prefer focused buffer assertions over a large snapshot framework until update volume demonstrates clear value.

@@ -62,7 +62,7 @@ pub(super) fn render_mock_debug(frame: &mut ratatui::Frame<'_>, app: &App) {
 }
 
 fn popup_area(area: Rect) -> Option<Rect> {
-    if area.width < 24 || area.height < 10 {
+    if area.width < 40 || area.height < 11 {
         return None;
     }
     let width = 44.min(area.width);

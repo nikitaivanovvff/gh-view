@@ -46,6 +46,8 @@ pub struct DashboardState {
     section_positions: [DashboardPosition; 2],
     pub(super) search: Option<DashboardSearchState>,
     pub loading: bool,
+    has_loaded_once: bool,
+    follow_selection: bool,
     collapsed_groups: BTreeSet<String>,
     repo_pages: BTreeMap<String, usize>,
     pub(super) rx: Option<DashboardReceiver>,
@@ -69,6 +71,8 @@ impl DashboardState {
             section_positions: [DashboardPosition::default(); 2],
             search: None,
             loading: false,
+            has_loaded_once: false,
+            follow_selection: true,
             collapsed_groups: BTreeSet::new(),
             repo_pages: BTreeMap::new(),
             rx: None,
@@ -77,25 +81,19 @@ impl DashboardState {
 
     pub fn rows(&self, status: &AppStatus, config: &DashboardConfig) -> Vec<Row<'_>> {
         match status {
-            AppStatus::MissingGh if self.data.is_empty() => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
-            AppStatus::Unauthenticated(_) if self.data.is_empty() => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
-            AppStatus::GitHubOutage(_) if self.data.is_empty() => return github_outage_rows(),
-            AppStatus::Timeout(_) if self.data.is_empty() => return vec![
+            AppStatus::MissingGh if !self.has_loaded_once => return vec![Row::Message("GitHub CLI `gh` was not found on PATH. Install it, authenticate it, then press r to retry.".to_owned())],
+            AppStatus::Unauthenticated(_) if !self.has_loaded_once => return vec![Row::Message("GitHub CLI is not authenticated. Run `gh auth login`, then press r to retry.".to_owned())],
+            AppStatus::GitHubOutage(_) if !self.has_loaded_once => return github_outage_rows(),
+            AppStatus::Timeout(_) if !self.has_loaded_once => return vec![
                 Row::Message("GitHub is taking too long to answer.".to_owned()),
                 Row::Message("The last gh command was stopped after 30s. Press r to retry.".to_owned()),
             ],
-            AppStatus::Error(_) if self.data.is_empty() => return vec![Row::Message("Could not load pull requests. Press r to retry.".to_owned())],
+            AppStatus::Error(_) if !self.has_loaded_once => return vec![Row::Message("Could not load pull requests. Press r to retry.".to_owned())],
             _ => {}
         }
 
         let mut rows = Vec::new();
         self.push_section_rows(&mut rows, self.active_section, config.prs_per_repo_page);
-
-        if self.data.is_empty() {
-            rows.push(Row::Message(
-                "No open PRs found. Press r to refresh.".to_owned(),
-            ));
-        }
 
         rows
     }
@@ -106,8 +104,7 @@ impl DashboardState {
         section: DashboardSection,
         page_size: usize,
     ) {
-        rows.push(Row::Section);
-        match section {
+        let shown = match section {
             DashboardSection::MyPrs => push_groups(
                 rows,
                 section,
@@ -131,8 +128,19 @@ impl DashboardState {
                             .matches(pr, login)
                             .then(|| pr.has_direct_review_request(login))
                     },
-                );
+                )
             }
+        };
+        if !shown {
+            let message = match section {
+                DashboardSection::MyPrs => "No PRs opened by you.",
+                DashboardSection::AwaitingReview => match self.review_scope {
+                    ReviewScope::All => "No review requests.",
+                    ReviewScope::Direct => "No direct review requests.",
+                    ReviewScope::Team => "No team review requests.",
+                },
+            };
+            rows.push(Row::Message(message.to_owned()));
         }
     }
 
@@ -142,6 +150,11 @@ impl DashboardState {
 
     pub fn review_scope(&self) -> ReviewScope {
         self.review_scope
+    }
+
+    pub(super) fn review_scope_includes(&self, pr: &PullRequest) -> bool {
+        self.review_scope
+            .matches(pr, self.current_user.as_deref().unwrap_or_default())
     }
 
     pub fn review_scope_counts(&self) -> (usize, usize, usize) {
@@ -213,11 +226,18 @@ impl DashboardState {
     }
 
     pub fn section_pr_count(&self, section: DashboardSection) -> usize {
-        let groups = match section {
-            DashboardSection::MyPrs => &self.data.my_prs,
-            DashboardSection::AwaitingReview => &self.data.awaiting_review,
-        };
-        groups.iter().map(|group| group.prs.len()).sum()
+        match section {
+            DashboardSection::MyPrs => self.data.my_prs.iter().map(|group| group.prs.len()).sum(),
+            DashboardSection::AwaitingReview => {
+                let login = self.current_user.as_deref().unwrap_or_default();
+                self.data
+                    .awaiting_review
+                    .iter()
+                    .flat_map(|group| &group.prs)
+                    .filter(|pr| self.review_scope.matches(pr, login))
+                    .count()
+            }
+        }
     }
 
     pub fn apply_success(
@@ -229,6 +249,7 @@ impl DashboardState {
     ) {
         self.current_user = Some(user);
         self.data = Dashboard::from_prs(my_prs, reviews);
+        self.has_loaded_once = true;
         self.clamp_search_selection();
         let valid_groups = group_names(&self.data);
         self.collapsed_groups = self
@@ -249,25 +270,30 @@ impl DashboardState {
         self.selected = self
             .selected
             .min(self.rows(status, config).len().saturating_sub(1));
+        self.follow_selection = true;
     }
 
     pub fn next(&mut self, status: &AppStatus, config: &DashboardConfig) {
         let len = self.rows(status, config).len();
         if len > 0 {
             self.selected = (self.selected + 1).min(len - 1);
+            self.follow_selection = true;
         }
     }
 
     pub fn previous(&mut self) {
         self.selected = self.selected.saturating_sub(1);
+        self.follow_selection = true;
     }
 
     pub fn scroll_down(&mut self) {
         self.scroll = self.scroll.saturating_add(1);
+        self.follow_selection = false;
     }
 
     pub fn scroll_up(&mut self) {
         self.scroll = self.scroll.saturating_sub(1);
+        self.follow_selection = false;
     }
 
     pub fn select(&mut self, index: usize, status: &AppStatus, config: &DashboardConfig) {
@@ -379,7 +405,15 @@ impl DashboardState {
     }
 
     pub fn show_loading_screen(&self) -> bool {
-        self.loading
+        self.loading && !self.has_loaded_once
+    }
+
+    pub(crate) fn follows_selection(&self) -> bool {
+        self.follow_selection
+    }
+
+    pub(super) fn has_loaded_once(&self) -> bool {
+        self.has_loaded_once
     }
 
     pub fn open_search(&mut self) {

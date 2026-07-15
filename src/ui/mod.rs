@@ -1,6 +1,7 @@
 mod dashboard;
 mod detail;
 mod footer;
+mod help;
 mod input;
 mod layout;
 mod mock_debug;

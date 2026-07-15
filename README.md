@@ -14,9 +14,9 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
 
 ![gh-view My PRs dashboard](docs/assets/my_prs_example.png)
 
-### Awaiting Review
+### Review Requests
 
-![gh-view Awaiting Review dashboard](docs/assets/awaiting_review_example.png)
+![gh-view Review Requests dashboard](docs/assets/awaiting_review_example.png)
 
 ### PR Detail
 
@@ -28,8 +28,9 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
 - Separate full-page dashboard views for:
   - PRs opened by you
   - PRs awaiting your direct review or review from one of your teams
-- Awaiting-review filters for all, direct, and team requests
+- Review-request filters for all, direct, and team requests
 - Compact PR rows with review state, CI state, reviewers, and age
+- Sticky dashboard identity, navigation, and review-filter header
 - Dashboard fuzzy finder for quickly opening loaded PRs by repo, branch, title, author, reviewer, status, or section
 - Keyboard and mouse navigation across dashboard, search, detail, and theme controls
 - Runtime theme picker with dark and light presets and persistent selection
@@ -128,9 +129,16 @@ prs_per_repo_page = 3
 | `p` / `←` | Previous page for selected repository |
 | `b` | Open selected PR in browser |
 | `r` | Refresh dashboard |
+| `?` | Show all dashboard shortcuts |
 | `q` / `esc` | Quit |
 
-The theme picker supports `j`/`k`, arrow keys, the mouse wheel, and clicking a theme for a live preview. Press `enter` to save the selected theme to `[ui].theme`; `esc` cancels the preview and restores the previous theme.
+Direct and team filters overlap. A PR requested from both you and one of your teams appears in and is counted by both filters.
+
+Dashboard rows use select-first mouse behavior. Click a row to select it, then click the selected PR again to open it or the selected repository again to toggle it. Search results open with one click.
+
+After the initial load, refreshing keeps the current rows visible and shows progress in the header. If refresh fails, the existing rows remain available with a concise retry message.
+
+The theme picker supports `j`/`k`, arrow keys, the mouse wheel, and clicking a theme for a live preview. Press `enter` to save the selected theme to `[ui].theme`; `q` or `esc` cancels the preview and restores the previous theme.
 
 Preset colors are adapted from the official [Catppuccin](https://catppuccin.com/palette/), [Tokyo Night](https://github.com/folke/tokyonight.nvim), [Rosé Pine](https://rosepinetheme.com/palette/ingredients/), [Gruvbox](https://github.com/morhetz/gruvbox), [Solarized](https://ethanschoonover.com/solarized/), and [GitHub Primer](https://primer.style/primitives/colors) palettes.
 
@@ -138,7 +146,7 @@ Preset colors are adapted from the official [Catppuccin](https://catppuccin.com/
 
 The dashboard fuzzy finder searches only PRs already loaded in the dashboard. It includes PRs hidden inside collapsed repository groups and does not make additional GitHub calls.
 
-Searchable fields include repository, PR number, title, branch name, author, reviewers, requested reviewers, review status, CI/check status, and dashboard section (`My PRs` or `Awaiting Review`). With an empty query, the popup shows loaded PRs in dashboard order.
+Searchable fields include repository, PR number, title, branch name, author, reviewers, requested reviewers, review status, CI/check status, and dashboard section (`My PRs` or `Review Requests`). With an empty query, the popup shows loaded PRs in dashboard order.
 
 | Key | Action |
 | --- | --- |
@@ -161,6 +169,7 @@ Searchable fields include repository, PR number, title, branch name, author, rev
 | `p` / `←` | Previous discussion item |
 | `b` | Open PR in browser |
 | `r` | Refresh PR detail |
+| `?` | Show all PR detail shortcuts |
 | `q` / `esc` | Back to dashboard |
 
 ## Mock demo data
@@ -171,7 +180,23 @@ Use mock mode to try the UI without a GitHub account or network calls:
 gh-view --mock
 ```
 
-The mock data includes several repositories, paginated repository groups, PR review states, CI states, review-thread comments, replies, and code context.
+The mock data includes several repositories, paginated repository groups, PR review states, CI states, review-thread comments, replies, code context, and deliberately difficult design-audit fixtures.
+
+In mock mode, `F1` opens dashboard-state controls. Press `0` for the ready state, `5` for a GitHub outage, `6` for a timeout, `7` for a generic error, or `8` for an authentication error. `F1`, `q`, or `esc` closes the popup.
+
+### Mock design-audit fixtures
+
+Run `gh-view --mock`, then use these cases to inspect implemented edge-case behavior and the deferred detail-layout gap:
+
+| Case | How to inspect it |
+| --- | --- |
+| Selection and viewport coordination | Resize to roughly `80x12`, stay in My PRs, and press `j` repeatedly through the many `design-lab` repositories. Keyboard selection remains visible, while a centered `↑ more`/`↓ more` overlay in the footer rule indicates hidden content. Mouse-wheel scrolling can still browse away from selection. |
+| Repository identity | In My PRs, compare the adjacent `alpha/shared-ui` and `beta/shared-ui` groups. The full owner/repository labels keep them unambiguous. |
+| Reviewer outcome colors | Search for `reviewer notation`, open its repository group if needed, and compare the approved, changes-requested, commented, and requested identities. They use success, warning, muted, and info colors respectively; narrow widths summarize omitted identities as `+N`. |
+| Detail metadata pressure | Search for `metadata pressure`, open PR `#903`, and inspect it around 80 columns. Its long author, branches, title, reviewer, and unbroken body token expose clipping and wrapping priorities. |
+| Fuzzy-match explanation | Search for `needle-reviewer` or `match-only-author-needle`. PR `#904` explains the hidden source as `reviewer @needle-reviewer-hidden-from-search-results` or `author @match-only-author-needle`. |
+
+Theme-picker scrolling is a contingent gap rather than a current visible defect: all current themes fit the enforced `40x15` minimum. Visual-regression coverage and nonzero-origin mouse geometry are test-suite gaps and cannot be represented honestly as GitHub mock data.
 
 ## Development
 

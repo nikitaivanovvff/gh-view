@@ -79,6 +79,17 @@ pub(super) fn handle_event(
         return Ok(InputOutcome::Continue(changed));
     }
 
+    if app.help_is_open() {
+        let changed = match key.code {
+            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
+                app.close_help();
+                true
+            }
+            _ => false,
+        };
+        return Ok(InputOutcome::Continue(changed));
+    }
+
     let changed = match app.view {
         AppView::Dashboard if app.search_is_open() => match key.code {
             KeyCode::Esc => {
@@ -120,14 +131,15 @@ pub(super) fn handle_event(
         AppView::Dashboard => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(InputOutcome::Quit),
             KeyCode::F(1) => app.toggle_mock_debug(),
+            KeyCode::Char('?') => {
+                app.open_help();
+                true
+            }
             KeyCode::Char('1') => app.show_dashboard_section(DashboardSection::MyPrs),
             KeyCode::Char('2') => app.show_dashboard_section(DashboardSection::AwaitingReview),
             KeyCode::Tab => app.cycle_dashboard_section(),
             KeyCode::Char('f') => app.cycle_review_scope(),
-            KeyCode::Char('/') => {
-                app.open_search();
-                true
-            }
+            KeyCode::Char('/') => app.open_search(),
             KeyCode::Char('t') => {
                 app.open_theme_picker();
                 true
@@ -171,6 +183,10 @@ pub(super) fn handle_event(
             _ => false,
         },
         AppView::Detail => match key.code {
+            KeyCode::Char('?') => {
+                app.open_help();
+                true
+            }
             KeyCode::Char('q') | KeyCode::Esc => {
                 app.back_to_dashboard();
                 true
@@ -216,6 +232,9 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App, mouse_layout: &MouseLayout) ->
         return handle_theme_picker_mouse(mouse, app, target);
     }
     if app.mock_debug_is_open() {
+        return false;
+    }
+    if app.help_is_open() {
         return false;
     }
 
@@ -282,6 +301,10 @@ fn handle_dashboard_mouse(mouse: MouseEvent, app: &mut App, target: Option<Mouse
             true
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            if target == Some(MouseTarget::DashboardRetry) {
+                app.refresh_async();
+                return true;
+            }
             if let Some(MouseTarget::DashboardSection(section)) = target {
                 return app.show_dashboard_section(section);
             }
@@ -347,7 +370,7 @@ fn mock_error_mode_for_key(key: char) -> Option<Option<MockErrorMode>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{DetailPane, DetailStatus};
+    use crate::app::{AppStatus, DetailPane, DetailStatus};
     use crate::github::{GhStatus, MockErrorMode, MockGhClient, PullRequestSource};
     use crate::model::{PullRequest, PullRequestDetail};
     use crate::ui::render::render;
@@ -424,14 +447,14 @@ mod tests {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
-        assert_continue_changed(key(KeyCode::Char('j'), &mut app), true);
-        assert_eq!(app.dashboard.selected, 1);
-
         assert_continue_changed(key(KeyCode::Char('o'), &mut app), true);
         assert!(matches!(
-            app.rows().get(1),
+            app.rows().first(),
             Some(crate::app::Row::Group { open: false, .. })
         ));
+        assert_continue_changed(key(KeyCode::Char('o'), &mut app), true);
+        assert_continue_changed(key(KeyCode::Char('j'), &mut app), true);
+        assert_eq!(app.dashboard.selected, 1);
 
         assert_continue_changed(key(KeyCode::Char('k'), &mut app), true);
         assert_eq!(app.dashboard.selected, 0);
@@ -439,6 +462,23 @@ mod tests {
             key(KeyCode::Char('q'), &mut app),
             InputOutcome::Quit
         ));
+    }
+
+    #[test]
+    fn question_mark_opens_and_closes_contextual_help() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+
+        assert_continue_changed(key(KeyCode::Char('?'), &mut app), true);
+        assert!(app.help_is_open());
+        assert_continue_changed(key(KeyCode::Char('j'), &mut app), false);
+        assert_continue_changed(key(KeyCode::Char('?'), &mut app), true);
+        assert!(!app.help_is_open());
+
+        app.view = AppView::Detail;
+        assert_continue_changed(key(KeyCode::Char('?'), &mut app), true);
+        assert!(app.help_is_open());
+        assert_continue_changed(key(KeyCode::Esc, &mut app), true);
+        assert!(!app.help_is_open());
     }
 
     #[test]
@@ -489,7 +529,21 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_mouse_wheel_scrolls_and_click_selects_or_opens_rows() {
+    fn search_does_not_open_behind_startup_screens() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.dashboard.loading = true;
+
+        assert_continue_changed(key(KeyCode::Char('/'), &mut app), false);
+        assert!(!app.search_is_open());
+
+        app.dashboard.loading = false;
+        app.status = AppStatus::Error("failed".to_owned());
+        assert_continue_changed(key(KeyCode::Char('/'), &mut app), false);
+        assert!(!app.search_is_open());
+    }
+
+    #[test]
+    fn dashboard_mouse_selects_first_and_activates_selected_pr() {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
@@ -556,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_mouse_second_click_on_group_toggles_collapse() {
+    fn clicking_the_selected_dashboard_group_toggles_collapse() {
         let mut app = App::with_default_config(Box::new(MockGhClient::new()));
         app.refresh();
 
@@ -566,7 +620,7 @@ mod tests {
         );
         assert!(matches!(
             app.rows().get(app.dashboard.selected),
-            Some(crate::app::Row::Group { open: true, .. })
+            Some(crate::app::Row::Group { open: false, .. })
         ));
 
         assert_continue_changed(
@@ -575,7 +629,7 @@ mod tests {
         );
         assert!(matches!(
             app.rows().get(app.dashboard.selected),
-            Some(crate::app::Row::Group { open: false, .. })
+            Some(crate::app::Row::Group { open: true, .. })
         ));
     }
 

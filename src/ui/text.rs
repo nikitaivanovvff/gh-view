@@ -4,6 +4,7 @@ use crate::model::{CheckStatus, PullRequest, ReviewerState};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::time::{SystemTime, UNIX_EPOCH};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const STALE_DAYS: i64 = 7;
 
@@ -25,7 +26,7 @@ pub(super) fn reviewer_style(state: ReviewerState) -> Style {
         ReviewerState::Approved => theme::success(),
         ReviewerState::ChangesRequested => theme::warning(),
         ReviewerState::Requested => theme::info(),
-        ReviewerState::Commented => theme::muted_key(),
+        ReviewerState::Commented => theme::muted(),
     }
 }
 
@@ -35,6 +36,7 @@ pub(super) fn status_style(status: &str) -> Style {
         "needs review" => theme::info(),
         "changes requested" => theme::warning(),
         "draft" => theme::muted(),
+        "no decision" => theme::muted(),
         _ => theme::muted(),
     }
 }
@@ -59,8 +61,10 @@ pub(super) fn merge_style(mergeable: Option<&str>) -> Style {
 }
 
 pub(super) fn truncate(value: &str, max_width: usize) -> String {
-    let char_count = value.chars().count();
-    if char_count <= max_width {
+    if max_width == 0 {
+        return String::new();
+    }
+    if display_width(value) <= max_width {
         return value.to_owned();
     }
 
@@ -68,9 +72,23 @@ pub(super) fn truncate(value: &str, max_width: usize) -> String {
         return "…".to_owned();
     }
 
-    let mut truncated: String = value.chars().take(max_width - 1).collect();
+    let content_width = max_width - 1;
+    let mut width = 0;
+    let mut truncated = String::new();
+    for character in value.chars() {
+        let character_width = character.width().unwrap_or_default();
+        if width + character_width > content_width {
+            break;
+        }
+        truncated.push(character);
+        width += character_width;
+    }
     truncated.push('…');
     truncated
+}
+
+pub(super) fn display_width(value: &str) -> usize {
+    UnicodeWidthStr::width(value)
 }
 
 pub(super) fn ci_text(status: Option<&CheckStatus>) -> String {
@@ -169,7 +187,7 @@ mod tests {
     #[test]
     fn derives_pr_status_text() {
         let mut pr = pr();
-        assert_eq!(pr_status(&pr), "needs review");
+        assert_eq!(pr_status(&pr), "no decision");
 
         pr.review_decision = Some("APPROVED".to_owned());
         assert_eq!(pr_status(&pr), "approved");
@@ -178,6 +196,9 @@ mod tests {
         assert_eq!(pr_status(&pr), "changes requested");
 
         pr.review_decision = Some(String::new());
+        assert_eq!(pr_status(&pr), "no decision");
+
+        pr.review_decision = Some("REVIEW_REQUIRED".to_owned());
         assert_eq!(pr_status(&pr), "needs review");
 
         pr.is_draft = true;
@@ -210,6 +231,9 @@ mod tests {
         assert_eq!(truncate("hello", 10), "hello");
         assert_eq!(truncate("hello", 4), "hel…");
         assert_eq!(truncate("hello", 1), "…");
+        assert_eq!(truncate("hello", 0), "");
+        assert_eq!(truncate("界面", 3), "界…");
+        assert!(display_width(&truncate("界面", 2)) <= 2);
     }
 
     #[test]

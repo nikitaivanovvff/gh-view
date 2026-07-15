@@ -12,6 +12,15 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+const DETAIL_STACK_BELOW_WIDTH: u16 = 96;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DiscussionLayout {
+    discussion: Rect,
+    code: Rect,
+    separator: Option<Rect>,
+}
+
 pub(super) fn render_detail(
     frame: &mut ratatui::Frame<'_>,
     app: &App,
@@ -34,6 +43,7 @@ pub(super) fn render_detail(
             Paragraph::new(vec![super::dashboard::message_line(
                 false,
                 "No PR detail loaded. Press esc to go back.",
+                width,
             )])
             .style(theme::normal()),
             layout.description,
@@ -46,14 +56,20 @@ pub(super) fn render_detail(
     summary.push(Line::from(vec![
         Span::styled("GH-VIEW", theme::accent().add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(format!("{} #{}", pr.repo, pr.number), theme::muted()),
+        Span::styled(
+            truncate(
+                &format!("{} #{}", pr.repo, pr.number),
+                width.saturating_sub(9),
+            ),
+            theme::muted(),
+        ),
     ]));
     summary.push(focus_rule_line(
         width,
         app.detail.active_pane == DetailPane::Description,
     ));
     summary.push(Line::from(vec![Span::styled(
-        pr.title.clone(),
+        truncate(&pr.title, width),
         theme::normal().add_modifier(Modifier::BOLD),
     )]));
     summary.push(metadata_line(app, detail));
@@ -96,12 +112,11 @@ pub(super) fn render_detail(
     let footer = footer_lines(
         width,
         vec![
-            FooterItem::new("j/k", format!("scroll {}", active_pane_label(app))),
-            FooterItem::new("tab", "switch focus"),
-            FooterItem::new("n/p", "discussion"),
             FooterItem::new("esc/q", "back"),
-            FooterItem::new("b", "open in browser"),
-            FooterItem::new("r", "refresh detail"),
+            FooterItem::new("j/k", "scroll"),
+            FooterItem::new("tab", "focus"),
+            FooterItem::new("n/p", "discussion"),
+            FooterItem::new("?", "help"),
         ],
     );
     frame.render_widget(Paragraph::new(footer), layout.footer);
@@ -112,22 +127,17 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         return;
     };
 
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Length(1),
-            Constraint::Percentage(50),
-        ])
-        .split(area);
+    let panes = discussion_layout(area);
 
-    frame.render_widget(
-        Paragraph::new(vertical_rule_lines(
-            panes[1].height as usize,
-            app.detail.active_pane == DetailPane::Discussion,
-        )),
-        panes[1],
-    );
+    if let Some(separator) = panes.separator {
+        frame.render_widget(
+            Paragraph::new(vertical_rule_lines(
+                separator.height as usize,
+                app.detail.active_pane == DetailPane::Discussion,
+            )),
+            separator,
+        );
+    }
 
     let index = app.selected_discussion_index();
     let total = detail.discussion.len();
@@ -147,7 +157,7 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         };
         let empty = vec![
             focus_rule_line(
-                panes[0].width as usize,
+                panes.discussion.width as usize,
                 app.detail.active_pane == DetailPane::Discussion,
             ),
             section_label(
@@ -155,16 +165,19 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 app.detail.active_pane == DetailPane::Discussion,
             ),
             focus_rule_line(
-                panes[0].width as usize,
+                panes.discussion.width as usize,
                 app.detail.active_pane == DetailPane::Discussion,
             ),
             Line::styled(message, theme::muted()),
         ];
-        frame.render_widget(Paragraph::new(empty).style(theme::normal()), panes[0]);
+        frame.render_widget(
+            Paragraph::new(empty).style(theme::normal()),
+            panes.discussion,
+        );
         frame.render_widget(
             Paragraph::new(vec![
                 focus_rule_line(
-                    panes[2].width as usize,
+                    panes.code.width as usize,
                     app.detail.active_pane == DetailPane::Discussion,
                 ),
                 section_label(
@@ -172,13 +185,13 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     app.detail.active_pane == DetailPane::Discussion,
                 ),
                 focus_rule_line(
-                    panes[2].width as usize,
+                    panes.code.width as usize,
                     app.detail.active_pane == DetailPane::Discussion,
                 ),
                 Line::styled(code_context_message, theme::muted()),
             ])
             .style(theme::normal()),
-            panes[2],
+            panes.code,
         );
         return;
     };
@@ -187,36 +200,57 @@ fn render_discussion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         item,
         index,
         total,
-        panes[0].width as usize,
+        panes.discussion.width as usize,
         &app.detail.discussion_status,
         app.detail.active_pane == DetailPane::Discussion,
     );
     let discussion_scroll = app
         .detail
         .discussion_scroll
-        .min(max_scroll(discussion.len(), panes[0].height));
+        .min(max_scroll(discussion.len(), panes.discussion.height));
     frame.render_widget(
         Paragraph::new(discussion)
             .style(theme::normal())
             .scroll((discussion_scroll, 0)),
-        panes[0],
+        panes.discussion,
     );
     frame.render_widget(
         Paragraph::new(code_context_lines(
             item,
-            panes[2].width as usize,
-            panes[2].height as usize,
+            panes.code.width as usize,
+            panes.code.height as usize,
             app.detail.active_pane == DetailPane::Discussion,
         ))
         .style(theme::normal()),
-        panes[2],
+        panes.code,
     );
 }
 
-fn active_pane_label(app: &App) -> &'static str {
-    match app.detail.active_pane {
-        DetailPane::Description => "description",
-        DetailPane::Discussion => "discussion",
+fn discussion_layout(area: Rect) -> DiscussionLayout {
+    if area.width < DETAIL_STACK_BELOW_WIDTH {
+        let panes = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        DiscussionLayout {
+            discussion: panes[0],
+            code: panes[1],
+            separator: None,
+        }
+    } else {
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Length(1),
+                Constraint::Percentage(50),
+            ])
+            .split(area);
+        DiscussionLayout {
+            discussion: panes[0],
+            separator: Some(panes[1]),
+            code: panes[2],
+        }
     }
 }
 
@@ -398,7 +432,13 @@ fn code_context_lines(
         .unwrap_or_default();
     lines.push(Line::from(vec![
         Span::styled("  ", theme::muted()),
-        Span::styled(format!("{}{}", context.path, line_hint), theme::muted_key()),
+        Span::styled(
+            truncate(
+                &format!("{}{}", context.path, line_hint),
+                width.saturating_sub(2),
+            ),
+            theme::muted_key(),
+        ),
     ]));
 
     let visible_range = visible_code_line_range(context, height.saturating_sub(lines.len()));
@@ -573,15 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn active_pane_label_tracks_focused_detail_pane() {
-        let mut app = App::with_default_config(Box::new(EmptySource));
-
-        assert_eq!(active_pane_label(&app), "description");
-        app.toggle_detail_pane();
-        assert_eq!(active_pane_label(&app), "discussion");
-    }
-
-    #[test]
     fn status_line_reports_errors_without_loading_messages() {
         let mut app = App::with_default_config(Box::new(EmptySource));
         assert!(status_line(&app).is_none());
@@ -600,6 +631,18 @@ mod tests {
 
         assert_eq!(lines.len(), 3);
         assert!(lines.iter().all(|line| line.to_string() == "│"));
+    }
+
+    #[test]
+    fn discussion_layout_stacks_below_breakpoint() {
+        let stacked = discussion_layout(Rect::new(3, 5, 95, 20));
+        assert_eq!(stacked.discussion, Rect::new(3, 5, 95, 10));
+        assert_eq!(stacked.code, Rect::new(3, 15, 95, 10));
+        assert_eq!(stacked.separator, None);
+
+        let wide = discussion_layout(Rect::new(3, 5, 96, 20));
+        assert_eq!(wide.discussion.y, wide.code.y);
+        assert_eq!(wide.separator.unwrap().width, 1);
     }
 
     #[test]
