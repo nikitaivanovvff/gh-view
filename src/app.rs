@@ -566,7 +566,17 @@ impl App {
     }
 
     pub fn open_selected_in_browser(&mut self) {
-        let url = match self.view {
+        let Some(url) = self.selected_browser_url() else {
+            return;
+        };
+
+        if let Err(error) = webbrowser::open(&url) {
+            self.status = AppStatus::Error(format!("failed to open browser: {error}"));
+        }
+    }
+
+    fn selected_browser_url(&self) -> Option<String> {
+        match self.view {
             AppView::Dashboard => self
                 .rows()
                 .get(self.dashboard.selected)
@@ -577,14 +587,6 @@ impl App {
                 .current
                 .as_ref()
                 .map(|detail| detail.pr.url.clone()),
-        };
-
-        let Some(url) = url else {
-            return;
-        };
-
-        if let Err(error) = webbrowser::open(&url) {
-            self.status = AppStatus::Error(format!("failed to open browser: {error}"));
         }
     }
 
@@ -1351,6 +1353,23 @@ mod tests {
         assert_eq!(app.detail.active_pane, DetailPane::Description);
         app.scroll_active_up();
         assert_eq!(app.detail.description_scroll, 0);
+    }
+
+    #[test]
+    fn detail_browser_target_remains_the_pr_when_discussion_is_focused() {
+        let mut app = App::with_default_config(Box::new(TestSource::ok()));
+        app.refresh();
+        app.next();
+        app.next();
+        app.open_selected_detail();
+        app.focus_detail_pane(DetailPane::Discussion);
+
+        let expected = app.detail.current.as_ref().unwrap().pr.url.clone();
+
+        assert_eq!(
+            app.selected_browser_url().as_deref(),
+            Some(expected.as_str())
+        );
     }
 
     #[test]

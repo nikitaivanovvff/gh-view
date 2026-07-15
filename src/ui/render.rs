@@ -232,6 +232,7 @@ mod tests {
         assert!(text.contains("#"));
         assert!(text.contains("DESCRIPTION"));
         assert!(text.contains("esc/q back"));
+        assert!(text.contains("b open PR"));
     }
 
     #[test]

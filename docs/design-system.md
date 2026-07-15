@@ -377,7 +377,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: `b` always opens the PR and is labeled `open PR`.
 - Option B: `b` opens the selected discussion URL when discussion is focused.
 - Option C: provide separate PR and discussion shortcuts.
-- **Recommendation:** Option A until a second shortcut has a strong use case. The destination is predictable and the label removes ambiguity.
+- **Accepted:** Option A. `b` always opens the PR and is labeled `open PR`, regardless of focused detail pane or discussion selection.
 
 ### 10. Detail Narrow Layout
 
@@ -428,7 +428,7 @@ Each question requires an explicit product decision before a behavior-changing i
 2. Keep filter-count terminology aligned with GitHub relationship semantics.
 3. Deduplicate global search according to the selected identity policy.
 4. Keep documented mouse behavior aligned with input tests.
-5. Decide whether discussion URLs need a separate browser action.
+5. Keep browser destination labels explicit when adding future actions.
 
 ### P3: Regression Coverage
 
