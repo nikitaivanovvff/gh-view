@@ -36,6 +36,7 @@ pub(super) fn status_style(status: &str) -> Style {
         "needs review" => theme::info(),
         "changes requested" => theme::warning(),
         "draft" => theme::muted(),
+        "no decision" => theme::muted(),
         _ => theme::muted(),
     }
 }
@@ -186,7 +187,7 @@ mod tests {
     #[test]
     fn derives_pr_status_text() {
         let mut pr = pr();
-        assert_eq!(pr_status(&pr), "needs review");
+        assert_eq!(pr_status(&pr), "no decision");
 
         pr.review_decision = Some("APPROVED".to_owned());
         assert_eq!(pr_status(&pr), "approved");
@@ -195,6 +196,9 @@ mod tests {
         assert_eq!(pr_status(&pr), "changes requested");
 
         pr.review_decision = Some(String::new());
+        assert_eq!(pr_status(&pr), "no decision");
+
+        pr.review_decision = Some("REVIEW_REQUIRED".to_owned());
         assert_eq!(pr_status(&pr), "needs review");
 
         pr.is_draft = true;

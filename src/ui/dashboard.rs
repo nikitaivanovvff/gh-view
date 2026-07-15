@@ -827,7 +827,7 @@ mod tests {
         assert!(group.contains("repo"));
         assert!(group.contains("2 PRs"));
         assert!(pr_line.contains("#1 Title"));
-        assert!(pr_line.contains("needs review"));
+        assert!(pr_line.contains("no decision"));
         assert!(message.contains("No PRs"));
     }
 

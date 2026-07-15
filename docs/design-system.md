@@ -104,7 +104,7 @@ Every palette defines an intentional background. Informational text should targe
 
 ### Status
 
-- Status text is lowercase: `approved`, `needs review`, `changes requested`, `draft`.
+- Status text is lowercase: `approved`, `needs review`, `changes requested`, `draft`, `no decision`.
 - CI uses a textual prefix and non-color symbol: `ci✓`, `ci×`, `ci…`, `ci-`.
 - Stale age uses both a symbol and color: `!12d`.
 - Review resolution is explicit: `thread · resolved`, `thread · unresolved`.
@@ -344,7 +344,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: use it whenever a non-draft PR is not approved or changes-requested.
 - Option B: use it only for GitHub `REVIEW_REQUIRED`.
 - Option C: derive it from outstanding direct/team reviewer requests.
-- **Recommendation:** Option B. It is a repository-policy decision from GitHub and avoids inventing status from incomplete reviewer data. Use `review pending` or `no decision` for other states if needed.
+- **Accepted:** Option B. `needs review` is reserved for GitHub `REVIEW_REQUIRED`; an absent decision is shown as `no decision` rather than inferred from incomplete reviewer data.
 
 ### 5. Global Search And Duplicates
 
