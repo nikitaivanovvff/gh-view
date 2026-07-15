@@ -32,7 +32,7 @@ From strongest to quietest:
 3. Review/CI state, author or reviewer identity, branch, age, and navigation position.
 4. Help text, inactive controls, descriptions, and decorative separators.
 
-Primary navigation is uppercase and accent-emphasized: `MY PRS [2]`, `AWAITING REVIEW [7]`, `DESCRIPTION`, and `DISCUSSION`. Secondary controls are lowercase and muted: `all [7]`, `direct [6]`, `team [2]`, and footer labels. An active secondary control may add restrained bold and underline; it must not compete with primary navigation.
+Primary navigation is uppercase and accent-emphasized: `MY PRS [2]`, `REVIEW REQUESTS [7]`, `DESCRIPTION`, and `DISCUSSION`. Secondary controls are lowercase and muted: `all [7]`, `direct [6]`, `team [2]`, and footer labels. An active secondary control may add restrained bold and underline; it must not compete with primary navigation.
 
 ## Spacing And Indentation
 
@@ -209,7 +209,7 @@ This inventory names recurring presentations without requiring component objects
 | Component | Example | Rules |
 | --- | --- | --- |
 | App header | `GH-VIEW  @octocat` | Accent product name, muted identity, optional right notice |
-| Primary navigation | `1 MY PRS [2]    2 AWAITING REVIEW [7]` | Uppercase, accent active item, exact clickable label geometry |
+| Primary navigation | `1 MY PRS [2]    2 REVIEW REQUESTS [7]` | Uppercase, accent active item, exact clickable label geometry |
 | Secondary filter | `all [7]   direct [6]   team [2]` | Lowercase, muted, active emphasis; compact active fallback on narrow widths |
 | Repository row | `▾ owner/repo   [6 PRs]   page 1/2` | Bold repository, bracketed quantity, fractional page position |
 | PR row | `needs review  #42 Fix parser   !12d   ci×` | Three-line compact unit; title truncates; age/CI align when present |
@@ -232,7 +232,7 @@ This inventory names recurring presentations without requiring component objects
 
 ### Empty
 
-- Empty text names the active scope: `No PRs opened by you.`, `No PRs awaiting your review.`, `No direct review requests.`, or `No team review requests.`
+- Empty text names the active scope: `No PRs opened by you.`, `No review requests.`, `No direct review requests.`, or `No team review requests.`
 - Do not show both a section placeholder and a global empty message.
 
 ### Error
@@ -264,7 +264,7 @@ Use these terms consistently in UI, README, tests, and documentation:
 | Concept | Preferred term |
 | --- | --- |
 | PRs authored by the current user | `My PRs` / `opened by you` |
-| PRs requesting the user's attention | `Awaiting Review` pending the open question below |
+| PRs with a user or team review request | `Review Requests` |
 | Request attached directly to current user | `direct review request` |
 | Request attached to a team | `team review request` |
 | All/direct/team selector | `review filter` in documentation, `filter` in compact footer text |
@@ -273,7 +273,7 @@ Use these terms consistently in UI, README, tests, and documentation:
 | Repository pagination | `repo page` |
 | Discussion item navigation | `discussion` |
 
-Avoid using `requested`, `needs review`, and `awaiting review` interchangeably. `requested` describes a concrete GitHub request; aggregate status and dashboard membership require explicit definitions.
+Avoid using `requested`, `needs review`, and `review requests` interchangeably. `requested` describes a concrete GitHub request; aggregate status and dashboard membership require explicit definitions.
 
 ## Current Audit
 
@@ -295,7 +295,7 @@ Avoid using `requested`, `needs review`, and `awaiting review` interchangeably. 
 - Dashboard rows bound long titles, repository names, branches, unknown CI text, and messages.
 - Narrow PR rows remove secondary status/age before PR identity and compact CI.
 - Footer controls are contextual, prioritized, and emitted only as whole pairs that fit.
-- Narrow awaiting-review layouts preserve the active filter when the full filter set does not fit.
+- Narrow review-request layouts preserve the active filter when the full filter set does not fit.
 - Empty states name the active view/filter and no longer duplicate a global message.
 - Search result capacity accounts for borders and fixed content; search uses a focus-level modal border.
 - Detail title/repository and code-context paths are bounded.
@@ -303,7 +303,6 @@ Avoid using `requested`, `needs review`, and `awaiting review` interchangeably. 
 
 ### Remaining Gaps
 
-- The Awaiting Review primary count is total loaded PRs even when a narrower filter is active.
 - Reviewer results still depend too heavily on color; long lists are bounded but do not summarize omitted identities.
 - Repository rows use the short repository name even when identical names from different owners need disambiguation.
 - Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
@@ -319,7 +318,7 @@ Avoid using `requested`, `needs review`, and `awaiting review` interchangeably. 
 
 Each question requires an explicit product decision before a behavior-changing implementation.
 
-### 1. Awaiting Review Count
+### 1. Review Requests Count
 
 - Option A: keep the primary count as total loaded PRs.
 - Option B: show the active filtered count.
@@ -338,7 +337,7 @@ Each question requires an explicit product decision before a behavior-changing i
 - Option A: retain `Awaiting Review`.
 - Option B: use `Review Requests`.
 - Option C: use `Needs Your Review`.
-- **Recommendation:** Option B. It corresponds most closely to the loaded GitHub relationship and avoids claiming that every listed PR still needs action. Treat this as a product rename, not a cleanup.
+- **Accepted:** Option B. The user-facing view is named `Review Requests`, matching the loaded GitHub relationship without claiming that every listed PR still needs action.
 
 ### 4. Aggregate `needs review`
 
@@ -357,7 +356,7 @@ Each question requires an explicit product decision before a behavior-changing i
 ### 6. Search Result Scope
 
 - Option A: opening a result preserves the active filter even if the PR is excluded from it.
-- Option B: switch Awaiting Review to `all` when needed.
+- Option B: switch Review Requests to `all` when needed.
 - Option C: keep the scope and show a temporary explanation on return.
 - **Recommendation:** Option B. Returning to a view that visibly contains the opened result is the least surprising behavior.
 

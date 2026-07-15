@@ -181,6 +181,18 @@ mod tests {
         assert!(search_matches(&dashboard, "zzzzzz").is_empty());
     }
 
+    #[test]
+    fn review_requests_section_name_is_searchable() {
+        let dashboard = Dashboard::from_prs(vec![], vec![pr("owner/api", 1, "Add Retry", "alice")]);
+
+        assert_eq!(
+            search_matches(&dashboard, "review requests")
+                .first()
+                .map(|item| item.pr.number),
+            Some(1)
+        );
+    }
+
     fn pr(repo: &str, number: u64, title: &str, author: &str) -> PullRequest {
         PullRequest {
             repo: repo.to_owned(),

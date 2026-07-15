@@ -52,7 +52,7 @@ impl DashboardSection {
     pub fn title(self) -> &'static str {
         match self {
             Self::MyPrs => "My PRs",
-            Self::AwaitingReview => "Awaiting Review",
+            Self::AwaitingReview => "Review Requests",
         }
     }
 

@@ -14,9 +14,9 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
 
 ![gh-view My PRs dashboard](docs/assets/my_prs_example.png)
 
-### Awaiting Review
+### Review Requests
 
-![gh-view Awaiting Review dashboard](docs/assets/awaiting_review_example.png)
+![gh-view Review Requests dashboard](docs/assets/awaiting_review_example.png)
 
 ### PR Detail
 
@@ -28,7 +28,7 @@ It uses the official GitHub CLI (`gh`) as the transport layer. `gh-view` does no
 - Separate full-page dashboard views for:
   - PRs opened by you
   - PRs awaiting your direct review or review from one of your teams
-- Awaiting-review filters for all, direct, and team requests
+- Review-request filters for all, direct, and team requests
 - Compact PR rows with review state, CI state, reviewers, and age
 - Dashboard fuzzy finder for quickly opening loaded PRs by repo, branch, title, author, reviewer, status, or section
 - Keyboard and mouse navigation across dashboard, search, detail, and theme controls
@@ -140,7 +140,7 @@ Preset colors are adapted from the official [Catppuccin](https://catppuccin.com/
 
 The dashboard fuzzy finder searches only PRs already loaded in the dashboard. It includes PRs hidden inside collapsed repository groups and does not make additional GitHub calls.
 
-Searchable fields include repository, PR number, title, branch name, author, reviewers, requested reviewers, review status, CI/check status, and dashboard section (`My PRs` or `Awaiting Review`). With an empty query, the popup shows loaded PRs in dashboard order.
+Searchable fields include repository, PR number, title, branch name, author, reviewers, requested reviewers, review status, CI/check status, and dashboard section (`My PRs` or `Review Requests`). With an empty query, the popup shows loaded PRs in dashboard order.
 
 | Key | Action |
 | --- | --- |

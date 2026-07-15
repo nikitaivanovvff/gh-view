@@ -176,7 +176,7 @@ mod tests {
 
         let text = draw_text(&app, 60, 20);
 
-        assert!(text.contains("AWAITING REVIEW"));
+        assert!(text.contains("REVIEW REQUESTS"));
         assert!(text.contains("all [7]"));
         assert!(text.contains("#"));
         assert!(text.contains("ci"));

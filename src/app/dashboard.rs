@@ -132,7 +132,7 @@ impl DashboardState {
             let message = match section {
                 DashboardSection::MyPrs => "No PRs opened by you.",
                 DashboardSection::AwaitingReview => match self.review_scope {
-                    ReviewScope::All => "No PRs awaiting your review.",
+                    ReviewScope::All => "No review requests.",
                     ReviewScope::Direct => "No direct review requests.",
                     ReviewScope::Team => "No team review requests.",
                 },
