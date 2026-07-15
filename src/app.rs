@@ -35,6 +35,7 @@ pub struct App {
     pub loading_frame: usize,
     pub theme_picker: Option<ThemePickerState>,
     mock_debug_open: bool,
+    help_open: bool,
     active_theme: usize,
     last_refresh_started_at: Option<Instant>,
     copy_notice: Option<CopyNotice>,
@@ -72,6 +73,7 @@ impl App {
             loading_frame: 0,
             theme_picker: None,
             mock_debug_open: false,
+            help_open: false,
             active_theme,
             last_refresh_started_at: None,
             copy_notice: None,
@@ -240,6 +242,18 @@ impl App {
 
     pub fn mock_debug_is_open(&self) -> bool {
         self.mock_debug_open
+    }
+
+    pub fn open_help(&mut self) {
+        self.help_open = true;
+    }
+
+    pub fn close_help(&mut self) {
+        self.help_open = false;
+    }
+
+    pub fn help_is_open(&self) -> bool {
+        self.help_open
     }
 
     pub fn active_theme_index(&self) -> usize {

@@ -11,7 +11,7 @@ The system is intentionally small. It is a set of shared decisions, not a compon
 3. **Predictable hierarchy.** The same kind of information appears in the same order, notation, and style across views.
 4. **Readable without color.** Text, position, symbols, and modifiers communicate aggregate and actionable state. Color reinforces meaning; individual reviewer outcomes are the documented compact exception.
 5. **Stable under pressure.** Long GitHub data and small terminals degrade deliberately. User-controlled text must not displace essential navigation or status.
-6. **Contextual interaction.** Show controls only when they can act on the current view or selection.
+6. **Stable interaction.** Keep a small footer command set fixed within each view. Put complete, contextual shortcut documentation behind `?` instead of changing footer geometry with selection.
 7. **Small implementation surface.** Prefer formatting helpers and explicit width budgets over a general widget or token framework.
 
 ## Visual Principles
@@ -172,7 +172,7 @@ Long titles, repositories, branches, usernames, team names, reviewers, file path
 
 ### Footer
 
-Preserve, in order: escape/back or quit, movement, primary navigation, current-selection action, then infrequent actions. Controls that do not fit are omitted as complete key-label pairs. Never leave a key without its label. Status feedback should remain visible without displacing every escape/navigation control.
+Each view has a fixed minimal footer. Dashboard shows quit, movement, open, search, and help; detail shows back, scroll, focus, discussion navigation, and help. Selection changes never alter footer contents. Controls that do not fit are omitted as complete key-label pairs, and `?` opens the complete context-specific keyboard reference.
 
 ### Tiny Terminals
 
@@ -191,8 +191,9 @@ Preserve, in order: escape/back or quit, movement, primary navigation, current-s
 - `enter` activates the selected item.
 - `esc` exits the current mode; on the dashboard it quits.
 - `q` exits or goes back where documented.
+- `?` opens the complete shortcut popup for the current view; `?`, `esc`, or `q` closes it.
 - Modal input takes precedence over page shortcuts.
-- Every shortcut appears in the README. Contextual footer hints are a subset, not the complete reference.
+- Every shortcut appears in the README and context-specific help popup. The footer is a stable subset, not the complete reference.
 
 ### Mouse
 
@@ -215,7 +216,8 @@ This inventory names recurring presentations without requiring component objects
 | PR row | `needs review  #42 Fix parser   !12d   ci×` | Three-line compact unit; title truncates; age/CI align when present |
 | Identity list | `@octocat  @owner/core` | Every user/team is prefixed with `@`; outcome uses semantic color and approved-first ordering |
 | Section header | `DESCRIPTION`, `DISCUSSION  1/4` | Uppercase label; navigation fraction remains unbracketed |
-| Footer | `q quit   j/k move   / search` | Lowercase, muted, prioritized whole controls; centered overflow hint overlays the rule above |
+| Footer | `q quit   j/k move   enter open   / search   ? help` | Fixed per view, lowercase and muted; centered overflow hint overlays the rule above |
+| Shortcut help | `Dashboard shortcuts` | Modal `?` reference containing every keyboard action for the current view |
 | Search overlay | `Search PRs  / parser` | Modal focus border, visible query, bounded result rows and footer |
 | Theme picker | `▸ Tokyo Night  clean neon city contrast` | Live preview, popup selection background, save/cancel hints |
 | Loading state | `Loading PRs...` | Name the region being loaded; animation is supplementary |
@@ -267,7 +269,7 @@ Use these terms consistently in UI, README, tests, and documentation:
 | PRs with a user or team review request | `Review Requests` |
 | Request attached directly to current user | `direct review request` |
 | Request attached to a team | `team review request` |
-| All/direct/team selector | `review filter` in documentation, `filter` in compact footer text |
+| All/direct/team selector | `review filter` |
 | GitHub user or team | `identity` generically, `user` or `team` specifically |
 | Browser action targeting PR | `open PR` |
 | Repository pagination | `repo page` |
@@ -294,7 +296,7 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 - Truncation handles zero width and Unicode terminal-cell width.
 - Dashboard rows bound long titles, repository names, branches, unknown CI text, and messages.
 - Narrow PR rows remove secondary status/age before PR identity and compact CI.
-- Footer controls are contextual, prioritized, and emitted only as whole pairs that fit.
+- Footer controls are stable per view, prioritized, and emitted only as whole pairs that fit; complete shortcuts live behind `?`.
 - Narrow review-request layouts preserve the active filter when the full filter set does not fit.
 - Empty states name the active view/filter and no longer duplicate a global message.
 - Search result capacity accounts for borders and fixed content; search uses a focus-level modal border.

@@ -175,7 +175,7 @@ pub(super) fn render_dashboard(
         chunks[1],
     );
     frame.render_widget(
-        Paragraph::new(dashboard_footer_lines(app, width, scroll, max_scroll)),
+        Paragraph::new(dashboard_footer_lines(width, scroll, max_scroll)),
         chunks[2],
     );
 
@@ -230,53 +230,14 @@ fn register_visible_target(
     }
 }
 
-fn dashboard_footer_lines(
-    app: &App,
-    width: usize,
-    scroll: u16,
-    max_scroll: u16,
-) -> Vec<Line<'static>> {
-    let rows = app.rows();
-    let selected = rows.get(app.dashboard.selected);
-    let mut items = vec![FooterItem::new("q", "quit"), FooterItem::new("j/k", "move")];
-    items.extend([
-        FooterItem::new("tab", "view"),
+fn dashboard_footer_lines(width: usize, scroll: u16, max_scroll: u16) -> Vec<Line<'static>> {
+    let items = vec![
+        FooterItem::new("q", "quit"),
+        FooterItem::new("j/k", "move"),
+        FooterItem::new("enter", "open"),
         FooterItem::new("/", "search"),
-    ]);
-    if app.dashboard.active_section() == DashboardSection::AwaitingReview {
-        items.push(FooterItem::new("f", "filter"));
-    }
-    match selected {
-        Some(Row::Pr(_)) => items.extend([
-            FooterItem::new("enter", "details"),
-            FooterItem::new("c", "copy branch"),
-            FooterItem::new("b", "open PR"),
-        ]),
-        Some(Row::Group { page_count, .. }) => {
-            items.push(FooterItem::new("o", "toggle group"));
-            if *page_count > 1 {
-                items.push(FooterItem::new("n/p", "repo page"));
-            }
-        }
-        _ => {}
-    }
-    items.extend([
-        FooterItem::new("t", "theme"),
-        FooterItem::new("r", "refresh"),
-    ]);
-    if app.is_mock() {
-        let mode = match app.mock_error_mode() {
-            Some(crate::github::MockErrorMode::GitHubDown) => "down",
-            Some(crate::github::MockErrorMode::Timeout) => "timeout",
-            Some(crate::github::MockErrorMode::Generic) => "error",
-            Some(crate::github::MockErrorMode::Auth) => "auth",
-            None => "ok",
-        };
-        items.extend([
-            FooterItem::new("mock", format!("[{mode}]")),
-            FooterItem::new("f1", "debug"),
-        ]);
-    }
+        FooterItem::new("?", "help"),
+    ];
     let mut lines = footer_lines(width, items);
     lines[0] = overflow_hint_rule(width, scroll > 0, scroll < max_scroll);
     lines
@@ -922,24 +883,24 @@ pub(super) fn message_line(selected: bool, message: &str, width: usize) -> Line<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::MockGhClient;
     use crate::model::CheckStatus;
     use crate::model::ReviewerState;
 
     #[test]
-    fn mock_footer_links_to_debug_popup_without_listing_error_states() {
-        let app = App::with_default_config(Box::new(MockGhClient::new()));
-        let footer = dashboard_footer_lines(&app, 500, 0, 1)
+    fn dashboard_footer_keeps_a_small_static_command_set() {
+        let footer = dashboard_footer_lines(500, 0, 1)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join(" ");
 
-        assert!(footer.contains("f1 debug"));
-        assert!(!footer.contains("5 down"));
-        assert!(!footer.contains("6 timeout"));
-        assert!(!footer.contains("7 error"));
-        assert!(!footer.contains("8 auth"));
+        assert!(footer.contains("q quit"));
+        assert!(footer.contains("j/k move"));
+        assert!(footer.contains("enter open"));
+        assert!(footer.contains("/ search"));
+        assert!(footer.contains("? help"));
+        assert!(!footer.contains("toggle group"));
+        assert!(!footer.contains("copy branch"));
     }
 
     #[test]

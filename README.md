@@ -129,6 +129,7 @@ prs_per_repo_page = 3
 | `p` / `←` | Previous page for selected repository |
 | `b` | Open selected PR in browser |
 | `r` | Refresh dashboard |
+| `?` | Show all dashboard shortcuts |
 | `q` / `esc` | Quit |
 
 Direct and team filters overlap. A PR requested from both you and one of your teams appears in and is counted by both filters.
@@ -168,6 +169,7 @@ Searchable fields include repository, PR number, title, branch name, author, rev
 | `p` / `←` | Previous discussion item |
 | `b` | Open PR in browser |
 | `r` | Refresh PR detail |
+| `?` | Show all PR detail shortcuts |
 | `q` / `esc` | Back to dashboard |
 
 ## Mock demo data

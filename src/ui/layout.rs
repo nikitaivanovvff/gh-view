@@ -6,6 +6,7 @@ pub(super) const DETAIL_MIN_SIZE: (u16, u16) = (40, 24);
 pub(super) const SEARCH_MIN_SIZE: (u16, u16) = (40, 9);
 pub(super) const THEME_PICKER_MIN_SIZE: (u16, u16) = (40, 15);
 pub(super) const MOCK_DEBUG_MIN_SIZE: (u16, u16) = (40, 11);
+pub(super) const HELP_MIN_SIZE: (u16, u16) = (40, 19);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MouseTarget {

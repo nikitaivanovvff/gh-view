@@ -79,6 +79,17 @@ pub(super) fn handle_event(
         return Ok(InputOutcome::Continue(changed));
     }
 
+    if app.help_is_open() {
+        let changed = match key.code {
+            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
+                app.close_help();
+                true
+            }
+            _ => false,
+        };
+        return Ok(InputOutcome::Continue(changed));
+    }
+
     let changed = match app.view {
         AppView::Dashboard if app.search_is_open() => match key.code {
             KeyCode::Esc => {
@@ -120,6 +131,10 @@ pub(super) fn handle_event(
         AppView::Dashboard => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(InputOutcome::Quit),
             KeyCode::F(1) => app.toggle_mock_debug(),
+            KeyCode::Char('?') => {
+                app.open_help();
+                true
+            }
             KeyCode::Char('1') => app.show_dashboard_section(DashboardSection::MyPrs),
             KeyCode::Char('2') => app.show_dashboard_section(DashboardSection::AwaitingReview),
             KeyCode::Tab => app.cycle_dashboard_section(),
@@ -171,6 +186,10 @@ pub(super) fn handle_event(
             _ => false,
         },
         AppView::Detail => match key.code {
+            KeyCode::Char('?') => {
+                app.open_help();
+                true
+            }
             KeyCode::Char('q') | KeyCode::Esc => {
                 app.back_to_dashboard();
                 true
@@ -216,6 +235,9 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App, mouse_layout: &MouseLayout) ->
         return handle_theme_picker_mouse(mouse, app, target);
     }
     if app.mock_debug_is_open() {
+        return false;
+    }
+    if app.help_is_open() {
         return false;
     }
 
@@ -443,6 +465,23 @@ mod tests {
             key(KeyCode::Char('q'), &mut app),
             InputOutcome::Quit
         ));
+    }
+
+    #[test]
+    fn question_mark_opens_and_closes_contextual_help() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+
+        assert_continue_changed(key(KeyCode::Char('?'), &mut app), true);
+        assert!(app.help_is_open());
+        assert_continue_changed(key(KeyCode::Char('j'), &mut app), false);
+        assert_continue_changed(key(KeyCode::Char('?'), &mut app), true);
+        assert!(!app.help_is_open());
+
+        app.view = AppView::Detail;
+        assert_continue_changed(key(KeyCode::Char('?'), &mut app), true);
+        assert!(app.help_is_open());
+        assert_continue_changed(key(KeyCode::Esc, &mut app), true);
+        assert!(!app.help_is_open());
     }
 
     #[test]

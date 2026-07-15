@@ -113,11 +113,10 @@ pub(super) fn render_detail(
         width,
         vec![
             FooterItem::new("esc/q", "back"),
-            FooterItem::new("j/k", format!("scroll {}", active_pane_label(app))),
+            FooterItem::new("j/k", "scroll"),
             FooterItem::new("tab", "focus"),
             FooterItem::new("n/p", "discussion"),
-            FooterItem::new("b", "open PR"),
-            FooterItem::new("r", "refresh"),
+            FooterItem::new("?", "help"),
         ],
     );
     frame.render_widget(Paragraph::new(footer), layout.footer);
@@ -252,13 +251,6 @@ fn discussion_layout(area: Rect) -> DiscussionLayout {
             separator: Some(panes[1]),
             code: panes[2],
         }
-    }
-}
-
-fn active_pane_label(app: &App) -> &'static str {
-    match app.detail.active_pane {
-        DetailPane::Description => "description",
-        DetailPane::Discussion => "discussion",
     }
 }
 
@@ -618,15 +610,6 @@ mod tests {
     fn max_scroll_saturates_to_visible_content() {
         assert_eq!(max_scroll(3, 10), 0);
         assert_eq!(max_scroll(10, 3), 7);
-    }
-
-    #[test]
-    fn active_pane_label_tracks_focused_detail_pane() {
-        let mut app = App::with_default_config(Box::new(EmptySource));
-
-        assert_eq!(active_pane_label(&app), "description");
-        app.toggle_detail_pane();
-        assert_eq!(active_pane_label(&app), "discussion");
     }
 
     #[test]

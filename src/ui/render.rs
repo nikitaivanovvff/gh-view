@@ -1,8 +1,9 @@
 use super::dashboard::render_dashboard;
 use super::detail::render_detail;
+use super::help::render_help;
 use super::layout::{
-    DASHBOARD_MIN_SIZE, DETAIL_MIN_SIZE, MOCK_DEBUG_MIN_SIZE, MouseLayout, SEARCH_MIN_SIZE,
-    THEME_PICKER_MIN_SIZE,
+    DASHBOARD_MIN_SIZE, DETAIL_MIN_SIZE, HELP_MIN_SIZE, MOCK_DEBUG_MIN_SIZE, MouseLayout,
+    SEARCH_MIN_SIZE, THEME_PICKER_MIN_SIZE,
 };
 use super::mock_debug::render_mock_debug;
 use super::theme;
@@ -26,6 +27,12 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
         ("theme picker", THEME_PICKER_MIN_SIZE)
     } else if app.mock_debug_is_open() {
         ("mock debug", MOCK_DEBUG_MIN_SIZE)
+    } else if app.help_is_open() {
+        let minimum = match app.view {
+            AppView::Dashboard => HELP_MIN_SIZE,
+            AppView::Detail => DETAIL_MIN_SIZE,
+        };
+        ("keyboard help", minimum)
     } else if app.search_is_open() {
         ("search", SEARCH_MIN_SIZE)
     } else {
@@ -48,6 +55,8 @@ pub(super) fn render(frame: &mut ratatui::Frame<'_>, app: &App) -> MouseLayout {
         render_theme_picker(frame, app, &mut mouse_layout);
     } else if app.mock_debug_is_open() {
         render_mock_debug(frame, app);
+    } else if app.help_is_open() {
+        render_help(frame, app);
     }
 
     mouse_layout
@@ -317,7 +326,7 @@ mod tests {
         assert!(text.contains("#"));
         assert!(text.contains("DESCRIPTION"));
         assert!(text.contains("esc/q back"));
-        assert!(text.contains("b open PR"));
+        assert!(text.contains("? help"));
         let discussion_row = text
             .lines()
             .position(|line| line.contains("DISCUSSION"))
@@ -402,8 +411,31 @@ mod tests {
         assert_eq!(layout.target_at(Position::new(39, 13)), None);
 
         app.cancel_theme_picker();
+        app.open_help();
+        assert!(draw_text(&app, 40, 18).contains("Need 40x19 for keyboard help"));
+        app.close_help();
         app.view = AppView::Detail;
         assert!(draw_text(&app, 40, 23).contains("Need 40x24 for PR detail"));
+    }
+
+    #[test]
+    fn help_popup_lists_infrequent_shortcuts_for_each_view() {
+        let mut app = App::with_default_config(Box::new(MockGhClient::new()));
+        app.open_help();
+
+        let dashboard = draw_text(&app, 80, 30);
+        assert!(dashboard.contains("Dashboard shortcuts"));
+        assert!(dashboard.contains("copy selected branch"));
+        assert!(dashboard.contains("toggle repository"));
+        assert!(dashboard.contains("open mock debug"));
+
+        app.close_help();
+        app.view = AppView::Detail;
+        app.open_help();
+        let detail = draw_text(&app, 80, 30);
+        assert!(detail.contains("PR detail shortcuts"));
+        assert!(detail.contains("refresh PR detail"));
+        assert!(!detail.contains("toggle repository"));
     }
 
     #[test]
