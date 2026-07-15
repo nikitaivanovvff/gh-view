@@ -300,12 +300,11 @@ Avoid using `requested`, `needs review`, and `review requests` interchangeably. 
 - Narrow review-request layouts preserve the active filter when the full filter set does not fit.
 - Empty states name the active view/filter and no longer duplicate a global message.
 - Search result capacity accounts for borders and fixed content; search uses a focus-level modal border.
-- Detail title/repository and code-context paths are bounded.
+- Detail title/repository, metadata, body tokens, and code-context paths are bounded by terminal display width.
 - Theme names are truncated before column padding.
 
 ### Remaining Gaps
 
-- Detail metadata and body wrapping need explicit responsive budgets, especially for long branches and unbroken tokens.
 - Theme picker selection does not scroll independently if the theme list later grows beyond its minimum-height popup.
 - There is no broad visual regression suite; current render tests focus mainly on mouse geometry.
 
@@ -404,9 +403,8 @@ These decisions resolve the initial design audit. Options remain recorded to pre
 
 ### P1: Responsive Consistency
 
-1. Give detail metadata explicit field priorities and display-cell budgets.
-2. Add theme-picker list scrolling if the available theme list outgrows the minimum popup.
-3. Keep the tail/cursor of long search queries visible.
+1. Add theme-picker list scrolling if the available theme list outgrows the minimum popup.
+2. Keep the tail/cursor of long search queries visible.
 
 ### P2: Identity And Terminology
 

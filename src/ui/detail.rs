@@ -1,7 +1,7 @@
 use super::layout::{DetailLayout, MouseLayout, MouseTarget};
 use super::text::{
-    age_label, ci_style, ci_text, loading_dots, merge_style, pr_status, rule_line, state_style,
-    status_style, truncate,
+    age_label, ci_style, ci_text, display_width, loading_dots, merge_style, pr_status, rule_line,
+    state_style, status_style, truncate,
 };
 use super::theme;
 use crate::app::{App, DetailPane, DetailStatus, DiscussionStatus};
@@ -11,6 +11,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use unicode_segmentation::UnicodeSegmentation;
 
 const DETAIL_STACK_BELOW_WIDTH: u16 = 96;
 
@@ -72,7 +73,7 @@ pub(super) fn render_detail(
         truncate(&pr.title, width),
         theme::normal().add_modifier(Modifier::BOLD),
     )]));
-    summary.push(metadata_line(app, detail));
+    summary.extend(metadata_lines(app, detail, width));
     if let Some(line) = status_line(app) {
         summary.push(line);
     }
@@ -260,52 +261,108 @@ fn max_scroll(line_count: usize, height: u16) -> u16 {
         .min(u16::MAX as usize) as u16
 }
 
-fn metadata_line(app: &App, detail: &crate::model::PullRequestDetail) -> Line<'static> {
+fn metadata_lines(
+    app: &App,
+    detail: &crate::model::PullRequestDetail,
+    width: usize,
+) -> Vec<Line<'static>> {
     let pr = &detail.pr;
     let review_status = pr_status(pr);
-    let mut spans = vec![Span::styled(format!("@{}", pr.author), theme::reviewer())];
+    let mut items = vec![vec![Span::styled(
+        truncate(&format!("@{}", pr.author), width),
+        theme::reviewer(),
+    )]];
 
     if app.detail_is_loading() {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
+        items.push(vec![Span::styled(
             loading_dots(app.loading_frame),
             theme::accent(),
-        ));
+        )]);
     }
 
-    spans.extend([
-        Span::styled("  review: ", theme::muted()),
-        Span::styled(review_status.clone(), status_style(&review_status)),
-        Span::styled(
-            format!("  {}", ci_text(pr.check_status.as_ref())),
-            ci_style(pr.check_status.as_ref()),
+    items.extend([
+        metadata_item(
+            "review: ",
+            &review_status,
+            width,
+            status_style(&review_status),
         ),
+        vec![Span::styled(
+            truncate(&ci_text(pr.check_status.as_ref()), width),
+            ci_style(pr.check_status.as_ref()),
+        )],
     ]);
 
     if app.detail.detail_status == DetailStatus::Ready {
-        spans.extend([
-            Span::styled("  branch: ", theme::muted()),
-            Span::styled(detail.head_ref.clone(), theme::normal()),
-            Span::styled(" -> ", theme::muted()),
-            Span::styled(detail.base_ref.clone(), theme::normal()),
-            Span::styled("  state: ", theme::muted()),
-            Span::styled(
-                detail.state.to_ascii_lowercase(),
+        items.extend([
+            metadata_item(
+                "branch: ",
+                &format!("{} -> {}", detail.head_ref, detail.base_ref),
+                width,
+                theme::normal(),
+            ),
+            metadata_item(
+                "state: ",
+                &detail.state.to_ascii_lowercase(),
+                width,
                 state_style(&detail.state),
             ),
-            Span::styled("  merge: ", theme::muted()),
-            Span::styled(
-                detail
+            metadata_item(
+                "merge: ",
+                &detail
                     .mergeable
                     .as_deref()
                     .unwrap_or("unknown")
                     .to_ascii_lowercase(),
+                width,
                 merge_style(detail.mergeable.as_deref()),
             ),
         ]);
     }
 
-    Line::from(spans)
+    pack_metadata_items(items, width)
+}
+
+fn metadata_item(
+    label: &'static str,
+    value: &str,
+    width: usize,
+    style: Style,
+) -> Vec<Span<'static>> {
+    let value = truncate(value, width.saturating_sub(display_width(label)));
+    vec![
+        Span::styled(label, theme::muted()),
+        Span::styled(value, style),
+    ]
+}
+
+fn pack_metadata_items(items: Vec<Vec<Span<'static>>>, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut spans = Vec::new();
+    let mut used = 0;
+
+    for item in items {
+        let item_width: usize = item
+            .iter()
+            .map(|span| display_width(span.content.as_ref()))
+            .sum();
+        let separator_width = usize::from(used > 0) * 2;
+        if used > 0 && used + separator_width + item_width > width {
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            used = 0;
+        }
+        if used > 0 {
+            spans.push(Span::raw("  "));
+            used += 2;
+        }
+        spans.extend(item);
+        used += item_width;
+    }
+
+    if !spans.is_empty() {
+        lines.push(Line::from(spans));
+    }
+    lines
 }
 
 fn status_line(app: &App) -> Option<Line<'static>> {
@@ -534,29 +591,73 @@ fn push_wrapped(
     indent: &'static str,
     style: Style,
 ) {
-    let available = width.saturating_sub(indent.chars().count()).max(12);
-    for paragraph in text.lines() {
-        let mut current = String::new();
-        for word in paragraph.split_whitespace() {
-            let next_len =
-                current.chars().count() + usize::from(!current.is_empty()) + word.chars().count();
-            if next_len > available && !current.is_empty() {
-                lines.push(Line::from(vec![
-                    Span::raw(indent),
-                    Span::styled(current, style),
-                ]));
-                current = String::new();
-            }
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(word);
+    let available = width.saturating_sub(display_width(indent));
+    for paragraph in text.split('\n') {
+        if available == 0 {
+            lines.push(Line::from(Span::raw(truncate(indent, width))));
+            continue;
         }
-        lines.push(Line::from(vec![
-            Span::raw(indent),
-            Span::styled(current, style),
-        ]));
+        let wrapped = wrap_preserving_whitespace(paragraph, available);
+        for content in wrapped {
+            push_wrapped_line(lines, indent, content, style);
+        }
     }
+}
+
+fn wrap_preserving_whitespace(value: &str, width: usize) -> Vec<String> {
+    if value.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut token_is_whitespace = None;
+    for grapheme in value.graphemes(true) {
+        let is_whitespace = grapheme.chars().all(char::is_whitespace);
+        if token_is_whitespace.is_some_and(|current| current != is_whitespace) {
+            tokens.push(std::mem::take(&mut token));
+        }
+        token.push_str(grapheme);
+        token_is_whitespace = Some(is_whitespace);
+    }
+    if !token.is_empty() {
+        tokens.push(token);
+    }
+
+    let mut wrapped = Vec::new();
+    let mut current = String::new();
+    for token in tokens {
+        let is_whitespace = token.chars().all(char::is_whitespace);
+        if !is_whitespace
+            && !current.is_empty()
+            && current.chars().any(|character| !character.is_whitespace())
+            && display_width(&current) + display_width(&token) > width
+        {
+            wrapped.push(std::mem::take(&mut current));
+        }
+
+        for grapheme in token.graphemes(true) {
+            let grapheme_width = display_width(grapheme);
+            if !current.is_empty() && display_width(&current) + grapheme_width > width {
+                wrapped.push(std::mem::take(&mut current));
+            }
+            current.push_str(grapheme);
+        }
+    }
+    wrapped.push(current);
+    wrapped
+}
+
+fn push_wrapped_line(
+    lines: &mut Vec<Line<'static>>,
+    indent: &'static str,
+    content: String,
+    style: Style,
+) {
+    lines.push(Line::from(vec![
+        Span::raw(indent),
+        Span::styled(content, style),
+    ]));
 }
 
 #[cfg(test)]
@@ -634,6 +735,33 @@ mod tests {
     }
 
     #[test]
+    fn metadata_items_wrap_without_exceeding_terminal_width() {
+        let lines = pack_metadata_items(
+            vec![
+                vec![Span::styled(
+                    truncate("@an-extremely-long-author-name", 20),
+                    theme::reviewer(),
+                )],
+                metadata_item("review: ", "changes requested", 20, theme::warning()),
+                metadata_item(
+                    "branch: ",
+                    "feature/a-very-long-name -> main",
+                    20,
+                    theme::normal(),
+                ),
+            ],
+            20,
+        );
+
+        assert!(lines.len() > 1);
+        assert!(
+            lines
+                .iter()
+                .all(|line| display_width(&line.to_string()) <= 20)
+        );
+    }
+
+    #[test]
     fn discussion_layout_stacks_below_breakpoint() {
         let stacked = discussion_layout(Rect::new(3, 5, 95, 20));
         assert_eq!(stacked.discussion, Rect::new(3, 5, 95, 10));
@@ -661,7 +789,54 @@ mod tests {
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>();
-        assert_eq!(text, vec!["  one two", "  three", "  ", "  four"]);
+        assert_eq!(text, vec!["  one ", "  two ", "  three", "  ", "  four"]);
+        assert!(text.iter().all(|line| display_width(line) <= 8));
+    }
+
+    #[test]
+    fn push_wrapped_splits_wide_and_unbroken_tokens_by_display_width() {
+        let mut lines = Vec::new();
+
+        push_wrapped(
+            &mut lines,
+            "界面界面 abcdefghijklmnop",
+            10,
+            "  ",
+            theme::normal(),
+        );
+
+        let text: Vec<_> = lines.iter().map(Line::to_string).collect();
+        let reconstructed: String = text
+            .iter()
+            .map(|line| line.strip_prefix("  ").unwrap())
+            .collect();
+        assert_eq!(reconstructed, "界面界面 abcdefghijklmnop");
+        assert!(text.iter().all(|line| display_width(line) <= 10));
+    }
+
+    #[test]
+    fn push_wrapped_preserves_indentation_and_grapheme_clusters() {
+        let mut lines = Vec::new();
+        let family = "👨‍👩‍👧‍👦";
+        let input = format!("  aligned   text {family}{family}");
+
+        push_wrapped(&mut lines, &input, 12, "  ", theme::normal());
+
+        let text: Vec<_> = lines.iter().map(Line::to_string).collect();
+        let reconstructed: String = text
+            .iter()
+            .map(|line| line.strip_prefix("  ").unwrap())
+            .collect();
+        assert_eq!(reconstructed, input);
+        assert!(text.first().unwrap().starts_with("    aligned"));
+        assert!(text.iter().all(|line| display_width(line) <= 12));
+        assert_eq!(text.iter().filter(|line| line.contains(family)).count(), 1);
+        assert_eq!(
+            text.iter()
+                .map(|line| line.matches(family).count())
+                .sum::<usize>(),
+            2
+        );
     }
 
     #[test]

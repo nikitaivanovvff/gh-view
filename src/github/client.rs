@@ -16,6 +16,9 @@ use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
+const GH_SEARCH_RESULT_LIMIT: usize = 1000;
+const GH_SEARCH_RESULT_LIMIT_ARG: &str = "1000";
+
 fn should_fallback_to_search(error: &anyhow::Error) -> bool {
     error
         .chain()
@@ -54,7 +57,16 @@ impl GhClient {
     }
 
     fn search_prs(&self, filter: &[&str]) -> Result<Vec<PullRequest>> {
-        let mut args = vec!["search", "prs", "--state", "open", "--json", SEARCH_FIELDS];
+        let mut args = vec![
+            "search",
+            "prs",
+            "--state",
+            "open",
+            "--limit",
+            GH_SEARCH_RESULT_LIMIT_ARG,
+            "--json",
+            SEARCH_FIELDS,
+        ];
         args.extend_from_slice(filter);
 
         let output = self.run_gh(args)?;
@@ -65,6 +77,7 @@ impl GhClient {
 
         let rows: Vec<SearchPullRequest> = serde_json::from_slice(&output.stdout)
             .context("failed to parse gh search prs JSON output")?;
+        ensure_search_results_complete(rows.len())?;
         Ok(rows.into_iter().map(PullRequest::from).collect())
     }
 
@@ -189,6 +202,15 @@ impl GhClient {
             }
         }
     }
+}
+
+fn ensure_search_results_complete(result_count: usize) -> Result<()> {
+    if result_count >= GH_SEARCH_RESULT_LIMIT {
+        bail!(
+            "gh search prs fallback reached GitHub's {GH_SEARCH_RESULT_LIMIT}-result limit; refusing to show a potentially incomplete dashboard"
+        );
+    }
+    Ok(())
 }
 
 fn deduplicate_prs(prs: &mut Vec<PullRequest>) {
@@ -340,7 +362,10 @@ impl GhClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{GhClient, deduplicate_prs, merge_review_requests, should_fallback_to_search};
+    use super::{
+        GhClient, deduplicate_prs, ensure_search_results_complete, merge_review_requests,
+        should_fallback_to_search,
+    };
     use crate::github::command::CommandRunner;
     use crate::github::{GhError, PullRequestSource};
     use crate::model::{PullRequest, ReviewRequestTarget};
@@ -349,6 +374,17 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn search_fallback_rejects_the_github_result_ceiling() {
+        assert!(ensure_search_results_complete(999).is_ok());
+        assert!(
+            ensure_search_results_complete(1000)
+                .unwrap_err()
+                .to_string()
+                .contains("potentially incomplete dashboard")
+        );
+    }
 
     enum ScriptedResult {
         Output(Output),
@@ -561,6 +597,8 @@ mod tests {
             "prs",
             "--state",
             "open",
+            "--limit",
+            "1000",
             "--json",
             crate::github::queries::SEARCH_FIELDS,
             filter,
@@ -577,6 +615,8 @@ mod tests {
             "prs",
             "--state",
             "open",
+            "--limit",
+            "1000",
             "--json",
             crate::github::queries::SEARCH_FIELDS,
             query,

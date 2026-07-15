@@ -4,7 +4,8 @@ use crate::model::{CheckStatus, PullRequest, ReviewerState};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::time::{SystemTime, UNIX_EPOCH};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 const STALE_DAYS: i64 = 7;
 
@@ -75,13 +76,13 @@ pub(super) fn truncate(value: &str, max_width: usize) -> String {
     let content_width = max_width - 1;
     let mut width = 0;
     let mut truncated = String::new();
-    for character in value.chars() {
-        let character_width = character.width().unwrap_or_default();
-        if width + character_width > content_width {
+    for grapheme in value.graphemes(true) {
+        let grapheme_width = display_width(grapheme);
+        if width + grapheme_width > content_width {
             break;
         }
-        truncated.push(character);
-        width += character_width;
+        truncated.push_str(grapheme);
+        width += grapheme_width;
     }
     truncated.push('…');
     truncated
@@ -234,6 +235,7 @@ mod tests {
         assert_eq!(truncate("hello", 0), "");
         assert_eq!(truncate("界面", 3), "界…");
         assert!(display_width(&truncate("界面", 2)) <= 2);
+        assert_eq!(truncate("👨‍👩‍👧‍👦 family", 3), "👨‍👩‍👧‍👦…");
     }
 
     #[test]

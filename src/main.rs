@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::process::ExitCode;
 
 mod app;
 mod config;
@@ -28,16 +29,17 @@ enum Commands {
     Doctor,
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
     let config = config::Config::load()?;
 
     match cli.command.unwrap_or(Commands::Dashboard) {
         Commands::Dashboard => {
             let client = client(cli.mock, &config);
-            ui::run(client, config)
+            ui::run(client, config)?;
+            Ok(ExitCode::SUCCESS)
         }
-        Commands::Doctor => run_doctor(cli.mock, &config),
+        Commands::Doctor => Ok(run_doctor(cli.mock, &config)),
     }
 }
 
@@ -51,7 +53,7 @@ fn client(mock: bool, config: &config::Config) -> Box<dyn github::PullRequestSou
     }
 }
 
-fn run_doctor(mock: bool, config: &config::Config) -> Result<()> {
+fn run_doctor(mock: bool, config: &config::Config) -> ExitCode {
     let client = client(mock, config);
 
     println!("gh-view doctor");
@@ -71,9 +73,11 @@ fn run_doctor(mock: bool, config: &config::Config) -> Result<()> {
         github::GhStatus::Ready { version } => {
             println!("GitHub CLI: {version}");
             println!("GitHub auth: configured");
+            ExitCode::SUCCESS
         }
         github::GhStatus::Missing => {
             println!("GitHub CLI: not found on PATH; install gh before fetching PRs.");
+            ExitCode::FAILURE
         }
         github::GhStatus::Unauthenticated { message } => {
             println!("GitHub CLI: installed but not authenticated");
@@ -81,10 +85,9 @@ fn run_doctor(mock: bool, config: &config::Config) -> Result<()> {
             if !message.is_empty() {
                 println!("Details: {message}");
             }
+            ExitCode::FAILURE
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

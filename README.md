@@ -85,6 +85,8 @@ Check dependencies/authentication:
 gh-view doctor
 ```
 
+With valid configuration, `doctor` exits successfully when `gh` is installed and authenticated (or when using `--mock`), and exits nonzero when `gh` is missing or unauthenticated.
+
 ## Configuration
 
 Optional configuration is read from `~/.config/gh-view/config.toml`.
@@ -138,6 +140,8 @@ Dashboard rows use select-first mouse behavior. Click a row to select it, then c
 
 After the initial load, refreshing keeps the current rows visible and shows progress in the header. If refresh fails, the existing rows remain available with a concise retry message.
 
+Dashboard GraphQL requests are paginated. If GitHub rejects the GraphQL command and gh-view falls back to `gh search prs`, it requests GitHub's 1,000-result search window and reports an error rather than displaying potentially incomplete data when that ceiling is reached.
+
 The theme picker supports `j`/`k`, arrow keys, the mouse wheel, and clicking a theme for a live preview. Press `enter` to save the selected theme to `[ui].theme`; `q` or `esc` cancels the preview and restores the previous theme.
 
 Preset colors are adapted from the official [Catppuccin](https://catppuccin.com/palette/), [Tokyo Night](https://github.com/folke/tokyonight.nvim), [Rosé Pine](https://rosepinetheme.com/palette/ingredients/), [Gruvbox](https://github.com/morhetz/gruvbox), [Solarized](https://ethanschoonover.com/solarized/), and [GitHub Primer](https://primer.style/primitives/colors) palettes.
@@ -186,14 +190,14 @@ In mock mode, `F1` opens dashboard-state controls. Press `0` for the ready state
 
 ### Mock design-audit fixtures
 
-Run `gh-view --mock`, then use these cases to inspect implemented edge-case behavior and the deferred detail-layout gap:
+Run `gh-view --mock`, then use these cases to inspect implemented edge-case behavior:
 
 | Case | How to inspect it |
 | --- | --- |
 | Selection and viewport coordination | Resize to roughly `80x12`, stay in My PRs, and press `j` repeatedly through the many `design-lab` repositories. Keyboard selection remains visible, while a centered `↑ more`/`↓ more` overlay in the footer rule indicates hidden content. Mouse-wheel scrolling can still browse away from selection. |
 | Repository identity | In My PRs, compare the adjacent `alpha/shared-ui` and `beta/shared-ui` groups. The full owner/repository labels keep them unambiguous. |
 | Reviewer outcome colors | Search for `reviewer notation`, open its repository group if needed, and compare the approved, changes-requested, commented, and requested identities. They use success, warning, muted, and info colors respectively; narrow widths summarize omitted identities as `+N`. |
-| Detail metadata pressure | Search for `metadata pressure`, open PR `#903`, and inspect it around 80 columns. Its long author, branches, title, reviewer, and unbroken body token expose clipping and wrapping priorities. |
+| Detail metadata pressure | Search for `metadata pressure`, open PR `#903`, and inspect it around 80 columns. Metadata moves between bounded lines, and its long unbroken body token wraps by terminal display width. |
 | Fuzzy-match explanation | Search for `needle-reviewer` or `match-only-author-needle`. PR `#904` explains the hidden source as `reviewer @needle-reviewer-hidden-from-search-results` or `author @match-only-author-needle`. |
 
 Theme-picker scrolling is a contingent gap rather than a current visible defect: all current themes fit the enforced `40x15` minimum. Visual-regression coverage and nonzero-origin mouse geometry are test-suite gaps and cannot be represented honestly as GitHub mock data.
